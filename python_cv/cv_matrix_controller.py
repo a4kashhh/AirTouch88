@@ -388,9 +388,13 @@ def main():
 
     sim_angle = 0.0
 
+    WINDOW_NAME = "AirTouch-88 Controller"
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(WINDOW_NAME, 1280, 720)
+
     try:
         # Run main processing loop
-        for loop_iter in range(300 if use_simulation else 1000000):
+        while True:
             if not use_simulation:
                 ret, frame = cap.read()
                 if not ret:
@@ -399,32 +403,25 @@ def main():
                 frame = cv2.flip(frame, 1)
                 detected, gesture, raw_led, raw_b, tip_px = analyzer.analyze(frame, brightness_mode=brightness_mode)
             else:
-                # Synthetic interactive demo canvas
                 frame = np.full((720, 1280, 3), 30, dtype=np.uint8)
                 sim_angle += 0.08
                 sim_x = int(640 + 380 * math.sin(sim_angle))
                 sim_y = int(360 + 200 * math.cos(sim_angle * 0.7))
                 tip_px = (sim_x, sim_y)
-
-                # Simulated zone mapping
                 raw_led = int(max(1, min(8, int(((sim_x - 150) / 980) * 8) + 1)))
                 raw_b = int(max(0, min(100, int((720 - sim_y) / 720 * 100))))
                 detected = True
                 gesture = "POINTING" if (int(sim_angle) % 4 != 0) else "OPEN PALM"
-
-                # Draw simulated hand pointer
                 cv2.circle(frame, (sim_x, sim_y), 18, (0, 220, 255), -1)
                 cv2.putText(frame, "SIMULATED FINGER", (sim_x - 70, sim_y - 25),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-            # Continuous brightness smoothing
             if raw_b is not None:
                 smoothed_b = int(jitter_filter.update_continuous(raw_b))
                 comm.send_brightness(smoothed_b)
             else:
                 smoothed_b = int(jitter_filter.filtered_val) if jitter_filter.filtered_val is not None else 75
 
-            # Debounced LED position
             debounced_led = None
             if detected and raw_led is not None:
                 debounced_led = jitter_filter.update_discrete_position(raw_led)
@@ -432,7 +429,6 @@ def main():
                     comm.send_led_position(debounced_led)
                     current_pattern_str = f"POSITION {debounced_led}"
 
-            # Gesture-triggered commands
             now = time.time()
             if now - last_gesture_cmd_time >= 2.5:
                 if gesture == "OPEN PALM":
@@ -460,14 +456,36 @@ def main():
                 cv2.circle(frame, tip_px, 10, (0, 255, 255), -1)
                 cv2.circle(frame, tip_px, 14, (0, 180, 255), 2)
 
-            # In GUI environments, display window
-            try:
-                cv2.imshow("AirTouch-88 Controller", frame)
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q') or key == 27:
-                    break
-            except Exception:
-                pass
+            cv2.imshow(WINDOW_NAME, frame)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q') or key == 27:
+                print("[SYSTEM] Exit requested by user.")
+                break
+            elif key >= ord('1') and key <= ord('8'):
+                pos = key - ord('0')
+                comm.send_led_position(pos)
+                current_pattern_str = f"POSITION {pos}"
+            elif key == ord('h') or key == ord('H'):
+                comm.send_command("PATTERN:HEART")
+                current_pattern_str = "HEART"
+            elif key == ord('s') or key == ord('S'):
+                comm.send_command("PATTERN:SMILE")
+                current_pattern_str = "SMILE"
+            elif key == ord('c') or key == ord('C'):
+                comm.send_command("PATTERN:CLEAR")
+                current_pattern_str = "CLEARED"
+            elif key == ord('m') or key == ord('M'):
+                comm.send_command("MESSAGE:HELLO")
+                current_pattern_str = "SCROLL: HELLO"
+            elif key == ord('d') or key == ord('D'):
+                comm.send_command("MESSAGE:HOW YOU DOING?")
+                current_pattern_str = "SCROLL: HOW YOU DOING?"
+            elif key == ord('p') or key == ord('P'):
+                comm.send_command("ANIMATION:PULSE")
+                current_pattern_str = "ANIM: PULSE"
+            elif key == ord('g') or key == ord('G'):
+                brightness_mode = "PINCH" if brightness_mode == "HEIGHT" else "HEIGHT"
+                print(f"[SETTING] Brightness mode toggled to: {brightness_mode}")
 
             time.sleep(0.03)
 
