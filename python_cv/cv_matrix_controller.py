@@ -513,13 +513,18 @@ def main():
     parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index (default: 0)")
     parser.add_argument("--demo", action="store_true", help="Run in simulation mode")
+    parser.add_argument("--fps", type=int, default=60, help="Target FPS limit (default: 60)")
     args = parser.parse_args()
+
+    TARGET_FPS = float(args.fps)
+    FRAME_INTERVAL = 1.0 / TARGET_FPS  # 16.67ms for 60 FPS
 
     print("\n============================================================", flush=True)
     print("  AIRTOUCH-88: HAND CONTROLLED 8x8 MATRIX (ISOLATED BRIGHTNESS)", flush=True)
     print(f"  Target ESP32-C3 IP:   {args.ip}:{args.port}", flush=True)
     if args.serial:
         print(f"  Serial Fallback:      {args.serial}", flush=True)
+    print(f"  FPS Lock:             Fixed {int(TARGET_FPS)} FPS Engine", flush=True)
     print("  Brightness is strictly isolated and will NOT change when pointing at dots!", flush=True)
     print("============================================================\n", flush=True)
 
@@ -539,11 +544,12 @@ def main():
     if not use_simulation:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+        cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
 
     current_pattern_str = "INTERACTIVE 64 DOTS"
     last_gesture_cmd_time = 0
 
-    fps = 30.0
+    fps = TARGET_FPS
     frame_count = 0
     start_time = time.time()
 
@@ -558,6 +564,7 @@ def main():
 
     try:
         while True:
+            frame_start_time = time.perf_counter()
             if not use_simulation:
                 ret, frame = cap.read()
                 if not ret:
@@ -661,12 +668,6 @@ def main():
                     current_pattern_str = "SCROLL: HOW YOU DOING?"
                     last_gesture_cmd_time = now
 
-            frame_count += 1
-            if frame_count % 15 == 0:
-                elapsed = time.time() - start_time
-                fps = 15.0 / elapsed if elapsed > 0 else 30.0
-                start_time = time.time()
-
             # Render HUD with isolated Brightness
             draw_hud(frame, current_brightness, gesture, fps, current_pattern_str, 
                      air_dot_target=active_hover_dot, brightness_active=brightness_active)
@@ -698,7 +699,15 @@ def main():
                 comm.send_command("MESSAGE:HOW YOU DOING?")
                 current_pattern_str = "SCROLL: HOW YOU DOING?"
 
-            time.sleep(0.02)
+            # Precision Fixed 60 FPS Frame Limiter
+            proc_time = time.perf_counter() - frame_start_time
+            sleep_needed = FRAME_INTERVAL - proc_time
+            if sleep_needed > 0.0005:
+                time.sleep(sleep_needed)
+
+            total_frame_dur = time.perf_counter() - frame_start_time
+            instant_fps = 1.0 / total_frame_dur if total_frame_dur > 0 else TARGET_FPS
+            fps = 0.90 * fps + 0.10 * min(TARGET_FPS, instant_fps)
 
     finally:
         if cap:
