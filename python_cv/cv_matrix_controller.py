@@ -64,7 +64,7 @@ def ensure_model_asset():
 # ==============================================================================
 class MatrixCommunicator:
     """Manages low-latency UDP packet transmission and optional USB Serial fallback."""
-    def __init__(self, udp_ip="192.168.1.100", udp_port=8888, serial_port=None, baud_rate=115200):
+    def __init__(self, udp_ip="10.194.177.102", udp_port=8888, serial_port=None, baud_rate=115200):
         self.udp_ip = udp_ip
         self.udp_port = udp_port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -508,7 +508,7 @@ def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state, current_brightness
 
     parser = argparse.ArgumentParser(description="AirTouch-88: Hand Gesture Controlled 8x8 LED Matrix")
-    parser.add_argument("--ip", type=str, default="192.168.1.100", help="ESP32-C3 Wi-Fi IP address")
+    parser.add_argument("--ip", type=str, default="10.194.177.102", help="ESP32-C3 Wi-Fi IP address")
     parser.add_argument("--port", type=int, default=8888, help="ESP32-C3 UDP port (default: 8888)")
     parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index (default: 0)")

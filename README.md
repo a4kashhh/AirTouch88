@@ -48,7 +48,7 @@ This project connects a custom-built, discrete MOSFET-switched 8×8 red LED matr
    const char* WIFI_PASS = "Your_WiFi_Password";
    ```
 4. Flash the code to the ESP32-C3.
-5. Open Serial Monitor (115200 baud) to note the assigned IP address (e.g., `192.168.1.100`).
+5. Open Serial Monitor (115200 baud) to note the assigned IP address (e.g., `10.194.177.102`).
 
 ---
 
@@ -63,7 +63,7 @@ This project connects a custom-built, discrete MOSFET-switched 8×8 red LED matr
    ```
 2. Start the controller with your ESP32-C3 IP address:
    ```bash
-   python3 cv_matrix_controller.py --ip 192.168.1.100
+   python3 cv_matrix_controller.py --ip 10.194.177.102
    ```
    *(If testing with a USB cable plugged in, you can pass `--serial /dev/cu.usbmodem...`)*
 
