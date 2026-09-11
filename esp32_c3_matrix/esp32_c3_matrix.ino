@@ -416,6 +416,22 @@ void handleCommand(String cmd) {
         uint8_t col = pos - 1;
         frameBuffer[3] = (1 << (7 - col));
         Serial.printf("[ACTION] Selected Position %d illuminated\n", pos);
+    }
+  }
+
+  // 1b. Toggle LED Command: "TOGGLE:<r>,<c>"
+  else if (cmd.startsWith("TOGGLE:")) {
+    String param = cmd.substring(7);
+    param.trim();
+    int commaIndex = param.indexOf(',');
+    if (commaIndex > 0) {
+      int r = param.substring(0, commaIndex).toInt();
+      int c = param.substring(commaIndex + 1).toInt();
+      if (r >= 0 && r < 8 && c >= 0 && c < 8) {
+        currentMode = MODE_STATIC_BITMAP;
+        frameBuffer[r] ^= (1 << (7 - c)); // Toggle specific LED
+        Serial.printf("[ACTION] LED toggled at (%d, %d) -> state: %s\n", 
+                      r, c, (frameBuffer[r] & (1 << (7 - c))) ? "ON" : "OFF");
       }
     }
   }
