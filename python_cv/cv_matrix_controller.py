@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Project: Computer Vision Controlled Custom 8x8 LED Matrix
+Project: AirTouch-88: Computer Vision Controlled Custom 8x8 LED Matrix
 Script:  cv_matrix_controller.py
 Features:
-  - Real-time webcam capture with MediaPipe Hands tracking (21 3D landmarks)
+  - Real-time webcam capture with MediaPipe Tasks HandLandmarker (CPU delegate)
+  - Interactive Demo / Simulation mode (--demo) for instant testing without camera
   - 8-Segment horizontal screen mapping for 1-to-8 LED position selection
   - Anti-jitter smoothing: Exponential Moving Average (EMA) + Debounce logic
   - BMW-style gesture brightness control:
-      * Mode 1: Vertical index finger height (Recommended, scale-invariant)
-      * Mode 2: Pinch distance between thumb and index tip
+      * Mode 1: Vertical index finger height (Scale-invariant, default)
+      * Mode 2: Pinch distance between thumb and index tip (Toggle with 'G')
   - Predefined gesture recognition:
       * POINTING: Selects individual LED (1-8)
       * OPEN PALM: Displays Heart Pattern
@@ -20,16 +21,20 @@ Features:
 ================================================================================
 """
 
-import cv2
-import numpy as np
-import socket
-import time
-import argparse
+import os
 import sys
 import math
+import time
+import socket
+import argparse
+import urllib.request
+import cv2
+import numpy as np
 
 try:
     import mediapipe as mp
+    from mediapipe.tasks import python
+    from mediapipe.tasks.python import vision
 except ImportError:
     print("[ERROR] MediaPipe is not installed. Run: pip install mediapipe opencv-python numpy pyserial")
     sys.exit(1)
@@ -39,6 +44,19 @@ try:
     SERIAL_AVAILABLE = True
 except ImportError:
     SERIAL_AVAILABLE = False
+
+
+# ==============================================================================
+# MODEL ASSET DOWNLOAD HELPER
+# ==============================================================================
+MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hand_landmarker.task")
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+
+def ensure_model_asset():
+    if not os.path.exists(MODEL_PATH):
+        print(f"[DOWNLOAD] Downloading MediaPipe Hand Landmarker model to {MODEL_PATH}...")
+        urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+        print("[DOWNLOAD] Model downloaded successfully.")
 
 
 # ==============================================================================
@@ -76,14 +94,14 @@ class MatrixCommunicator:
         # Send over UDP
         try:
             self.sock.sendto(payload, (self.udp_ip, self.udp_port))
-        except Exception as e:
+        except Exception:
             pass
 
         # Send over Serial
         if self.ser and self.ser.is_open:
             try:
                 self.ser.write(payload)
-            except Exception as e:
+            except Exception:
                 pass
 
         self.last_sent_cmd = cmd_str
@@ -92,7 +110,6 @@ class MatrixCommunicator:
     def send_brightness(self, brightness_val):
         """Throttled transmission for analog continuous brightness (max 20 packets/sec)."""
         now = time.time()
-        # Rate-limit to every 50ms and require at least 2% delta
         if (now - self.last_brightness_send_time >= 0.05) and (abs(brightness_val - self.last_sent_brightness) >= 2):
             self.last_brightness_send_time = now
             self.last_sent_brightness = brightness_val
@@ -110,7 +127,7 @@ class MatrixCommunicator:
 # ==============================================================================
 class AntiJitterFilter:
     """Provides EMA continuous filtering and frame-count debouncing."""
-    def __init__(self, alpha=0.25, debounce_frames=4):
+    def __init__(self, alpha=0.25, debounce_frames=3):
         self.alpha = alpha
         self.filtered_val = None
         self.debounce_frames = debounce_frames
@@ -139,35 +156,44 @@ class AntiJitterFilter:
 
 
 # ==============================================================================
-# 3. HAND GESTURE & LANDMARK ANALYZER
+# 3. HAND GESTURE & LANDMARK ANALYZER (MEDIAPIPE TASKS)
 # ==============================================================================
-class HandGestureAnalyzer:
-    """Extracts landmarks, interprets gestures, and maps coordinates."""
-    def __init__(self):
-        self.mp_hands = mp.solutions.hands
-        self.hands = self.mp_hands.Hands(
-            static_image_mode=False,
-            max_num_hands=1,
-            min_detection_confidence=0.7,
-            min_tracking_confidence=0.6
-        )
-        self.mp_draw = mp.solutions.drawing_utils
-        self.mp_drawing_styles = mp.solutions.drawing_styles
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (9, 10), (10, 11), (11, 12),
+    (13, 14), (14, 15), (15, 16),
+    (0, 17), (17, 18), (18, 19), (19, 20),
+    (5, 9), (9, 13), (13, 17)
+]
 
-        self.last_gesture_action_time = 0
-        self.gesture_cooldown_sec = 1.8  # Cooldown between pattern/message triggers
+class HandGestureAnalyzer:
+    """Extracts landmarks using MediaPipe Tasks HandLandmarker."""
+    def __init__(self):
+        ensure_model_asset()
+        base_options = python.BaseOptions(
+            model_asset_path=MODEL_PATH,
+            delegate=python.BaseOptions.Delegate.CPU
+        )
+        options = vision.HandLandmarkerOptions(
+            base_options=base_options,
+            num_hands=1,
+            min_hand_detection_confidence=0.6,
+            min_hand_presence_confidence=0.6,
+            min_tracking_confidence=0.5,
+            running_mode=vision.RunningMode.IMAGE
+        )
+        self.detector = vision.HandLandmarker.create_from_options(options)
 
     def dist(self, p1, p2):
         return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
 
     def analyze(self, frame_bgr, brightness_mode="HEIGHT"):
-        """
-        Processes frame and returns:
-          annotated_frame, hand_detected, gesture_name, selected_led, raw_brightness, tip_coords
-        """
         h, w, _ = frame_bgr.shape
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        results = self.hands.process(frame_rgb)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+        
+        result = self.detector.detect(mp_image)
 
         hand_detected = False
         gesture_name = "NONE"
@@ -175,20 +201,13 @@ class HandGestureAnalyzer:
         raw_brightness = None
         index_tip_px = None
 
-        if results.multi_hand_landmarks:
+        if result.hand_landmarks and len(result.hand_landmarks) > 0:
             hand_detected = True
-            hand_landmarks = results.multi_hand_landmarks[0]
+            lm_list = result.hand_landmarks[0]
 
-            # Convert normalized landmarks to pixel coordinates
-            pts = [(int(lm.x * w), int(lm.y * h)) for lm in hand_landmarks.landmark]
-            norm_pts = [(lm.x, lm.y) for lm in hand_landmarks.landmark]
+            pts = [(int(lm.x * w), int(lm.y * h)) for lm in lm_list]
+            norm_pts = [(lm.x, lm.y) for lm in lm_list]
 
-            # Landmark points:
-            # 0: Wrist, 4: Thumb tip
-            # 8: Index tip, 6: Index PIP, 5: Index MCP
-            # 12: Middle tip, 10: Middle PIP, 9: Middle MCP
-            # 16: Ring tip, 14: Ring PIP
-            # 20: Pinky tip, 18: Pinky PIP
             wrist = pts[0]
             thumb_tip = pts[4]
             index_tip = pts[8]
@@ -198,17 +217,13 @@ class HandGestureAnalyzer:
 
             index_tip_px = index_tip
 
-            # Scale factor: distance between wrist (0) and middle MCP (9)
             hand_scale = max(self.dist(pts[0], pts[9]), 20.0)
 
-            # Determine extension of each finger (scale-invariant)
             index_extended = self.dist(index_tip, wrist) > self.dist(pts[6], wrist) * 1.2
             middle_extended = self.dist(middle_tip, wrist) > self.dist(pts[10], wrist) * 1.2
             ring_extended = self.dist(ring_tip, wrist) > self.dist(pts[14], wrist) * 1.2
             pinky_extended = self.dist(pinky_tip, wrist) > self.dist(pts[18], wrist) * 1.2
-            thumb_extended = self.dist(thumb_tip, pts[17]) > self.dist(pts[3], pts[17]) * 1.1
 
-            # --- GESTURE CLASSIFICATION ---
             if index_extended and not middle_extended and not ring_extended and not pinky_extended:
                 gesture_name = "POINTING"
             elif index_extended and middle_extended and not ring_extended and not pinky_extended:
@@ -220,40 +235,29 @@ class HandGestureAnalyzer:
             else:
                 gesture_name = "TRACKING"
 
-            # Check for optical pinch
             pinch_dist_norm = self.dist(thumb_tip, index_tip) / hand_scale
             if pinch_dist_norm < 0.28 and gesture_name not in ["PEACE SIGN", "FIST"]:
                 gesture_name = "PINCH"
 
-            # --- 8-POSITION MAPPING (When pointing or tracking) ---
-            # Map index finger tip X coordinate [0.15 .. 0.85] across 8 zones
             norm_x = norm_pts[8][0]
             zone_min, zone_max = 0.12, 0.88
             clamped_x = max(zone_min, min(zone_max, norm_x))
             pos_ratio = (clamped_x - zone_min) / (zone_max - zone_min)
-            # Flip horizontally to match mirrored camera view naturally
             raw_pos = int(pos_ratio * 8) + 1
             selected_led = max(1, min(8, raw_pos))
 
-            # --- BMW-STYLE BRIGHTNESS EXTRACTION ---
             if brightness_mode == "HEIGHT":
-                # Index tip Y: Top of screen (0.18) -> 100%, Bottom of screen (0.82) -> 0%
                 norm_y = norm_pts[8][1]
                 b_ratio = (0.82 - norm_y) / (0.82 - 0.18)
                 raw_brightness = int(max(0.0, min(1.0, b_ratio)) * 100)
-            else: # PINCH MODE
-                # Thumb-index separation normalized
+            else:
                 p_ratio = (pinch_dist_norm - 0.20) / (0.80 - 0.20)
                 raw_brightness = int(max(0.0, min(1.0, p_ratio)) * 100)
 
-            # Draw standard skeleton landmarks
-            self.mp_draw.draw_landmarks(
-                frame_bgr,
-                hand_landmarks,
-                self.mp_hands.HAND_CONNECTIONS,
-                self.mp_drawing_styles.get_default_hand_landmarks_style(),
-                self.mp_drawing_styles.get_default_hand_connections_style()
-            )
+            for start_idx, end_idx in HAND_CONNECTIONS:
+                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (0, 220, 255), 2)
+            for pt in pts:
+                cv2.circle(frame_bgr, pt, 4, (0, 0, 255), -1)
 
         return hand_detected, gesture_name, selected_led, raw_brightness, index_tip_px
 
@@ -269,7 +273,6 @@ def draw_hud(frame, selected_led, brightness, gesture, mode_name, fps, current_p
     zone_x1, zone_x2 = int(w * 0.12), int(w * 0.88)
     slot_w = (zone_x2 - zone_x1) // 8
 
-    # Background banner
     cv2.rectangle(frame, (zone_x1 - 10, box_y1 - 10), (zone_x2 + 10, box_y2 + 10), (25, 25, 25), -1)
     cv2.rectangle(frame, (zone_x1 - 10, box_y1 - 10), (zone_x2 + 10, box_y2 + 10), (70, 70, 70), 2)
 
@@ -279,13 +282,11 @@ def draw_hud(frame, selected_led, brightness, gesture, mode_name, fps, current_p
         bx2 = bx1 + slot_w - 6
 
         if selected_led == pos_id:
-            # Active highlighted slot (Glowing Red/Orange)
             cv2.rectangle(frame, (bx1, box_y1), (bx2, box_y2), (0, 0, 220), -1)
             cv2.rectangle(frame, (bx1, box_y1), (bx2, box_y2), (50, 180, 255), 2)
             cv2.putText(frame, str(pos_id), (bx1 + slot_w // 2 - 12, box_y2 - 14),
                         cv2.FONT_HERSHEY_DUPLEX, 0.9, (255, 255, 255), 2)
         else:
-            # Inactive slot
             cv2.rectangle(frame, (bx1, box_y1), (bx2, box_y2), (45, 45, 45), -1)
             cv2.rectangle(frame, (bx1, box_y1), (bx2, box_y2), (90, 90, 90), 1)
             cv2.putText(frame, str(pos_id), (bx1 + slot_w // 2 - 10, box_y2 - 16),
@@ -294,7 +295,7 @@ def draw_hud(frame, selected_led, brightness, gesture, mode_name, fps, current_p
     cv2.putText(frame, "8-POSITION MATRIX SELECTOR", (zone_x1, box_y1 - 14),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 215, 255), 1, cv2.LINE_AA)
 
-    # 2. Right Side: Vertical Brightness Gauge (BMW-Style)
+    # 2. Right Side: Vertical Brightness Gauge
     bar_x = w - 45
     bar_y_top = 110
     bar_y_bottom = h - 90
@@ -303,7 +304,6 @@ def draw_hud(frame, selected_led, brightness, gesture, mode_name, fps, current_p
 
     cv2.rectangle(frame, (bar_x, bar_y_top), (bar_x + 22, bar_y_bottom), (35, 35, 35), -1)
     cv2.rectangle(frame, (bar_x, bar_y_top), (bar_x + 22, bar_y_bottom), (120, 120, 120), 2)
-    # Brightness fill
     cv2.rectangle(frame, (bar_x + 2, bar_y_bottom - fill_h), (bar_x + 20, bar_y_bottom - 2), (0, 165, 255), -1)
 
     cv2.putText(frame, f"{brightness}%", (bar_x - 45, bar_y_bottom - fill_h + 5),
@@ -317,7 +317,7 @@ def draw_hud(frame, selected_led, brightness, gesture, mode_name, fps, current_p
     cv2.rectangle(frame, (card_x, card_y), (card_x + card_w, card_y + card_h), (20, 20, 20), -1)
     cv2.rectangle(frame, (card_x, card_y), (card_x + card_w, card_y + card_h), (80, 80, 80), 2)
 
-    cv2.putText(frame, "SYSTEM STATUS", (card_x + 12, card_y + 25),
+    cv2.putText(frame, "AirTouch-88 STATUS", (card_x + 12, card_y + 25),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 215, 255), 2)
     cv2.putText(frame, f"Gesture:    {gesture}", (card_x + 12, card_y + 55),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 1)
@@ -342,15 +342,16 @@ def draw_hud(frame, selected_led, brightness, gesture, mode_name, fps, current_p
 # 5. MAIN EXECUTION LOOP
 # ==============================================================================
 def main():
-    parser = argparse.ArgumentParser(description="MediaPipe CV Controller for Custom 8x8 LED Matrix")
+    parser = argparse.ArgumentParser(description="AirTouch-88 CV Controller for Custom 8x8 LED Matrix")
     parser.add_argument("--ip", type=str, default="192.168.1.100", help="ESP32-C3 Wi-Fi IP address")
     parser.add_argument("--port", type=int, default=8888, help="ESP32-C3 UDP port (default: 8888)")
-    parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port (e.g. /dev/ttyUSB0 or COM3)")
+    parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port (e.g. /dev/ttyUSB0)")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index (default: 0)")
+    parser.add_argument("--demo", action="store_true", help="Run in interactive simulation/demo mode without webcam")
     args = parser.parse_args()
 
     print("\n============================================================")
-    print("  COMPUTER VISION 8x8 LED MATRIX CONTROLLER (OPENCV + MEDIAPIPE)")
+    print("  AIRTOUCH-88: COMPUTER VISION 8x8 MATRIX CONTROLLER")
     print(f"  Target ESP32-C3 IP:   {args.ip}:{args.port}")
     if args.serial:
         print(f"  Serial Fallback:      {args.serial}")
@@ -360,43 +361,70 @@ def main():
     analyzer = HandGestureAnalyzer()
     jitter_filter = AntiJitterFilter(alpha=0.25, debounce_frames=3)
 
-    cap = cv2.VideoCapture(args.camera)
-    if not cap.isOpened():
-        print(f"[ERROR] Could not open camera {args.camera}. Check device connection.")
-        sys.exit(1)
+    use_simulation = args.demo
+    cap = None
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+    if not use_simulation:
+        cap = cv2.VideoCapture(args.camera)
+        if not cap.isOpened():
+            print(f"[NOTE] Could not open camera {args.camera} directly (macOS camera permissions required).")
+            print("[NOTE] Switching automatically to interactive SIMULATION / DEMO MODE.")
+            print("[NOTE] To use physical webcam: run from your Mac Terminal directly: python3 python_cv/cv_matrix_controller.py\n")
+            use_simulation = True
 
-    brightness_mode = "HEIGHT"  # "HEIGHT" or "PINCH"
+    if not use_simulation:
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+    brightness_mode = "HEIGHT"
     current_pattern_str = "HEART"
     last_gesture_cmd_time = 0
 
-    fps = 0.0
+    fps = 30.0
     frame_count = 0
     start_time = time.time()
 
+    print("[SYSTEM] Controller active! Running loop (Simulating telemetry to ESP32)...")
+
+    sim_angle = 0.0
+
     try:
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                print("[WARNING] Empty frame received from webcam.")
-                continue
+        # Run main processing loop
+        for loop_iter in range(300 if use_simulation else 1000000):
+            if not use_simulation:
+                ret, frame = cap.read()
+                if not ret:
+                    time.sleep(0.01)
+                    continue
+                frame = cv2.flip(frame, 1)
+                detected, gesture, raw_led, raw_b, tip_px = analyzer.analyze(frame, brightness_mode=brightness_mode)
+            else:
+                # Synthetic interactive demo canvas
+                frame = np.full((720, 1280, 3), 30, dtype=np.uint8)
+                sim_angle += 0.08
+                sim_x = int(640 + 380 * math.sin(sim_angle))
+                sim_y = int(360 + 200 * math.cos(sim_angle * 0.7))
+                tip_px = (sim_x, sim_y)
 
-            # Mirror frame horizontally for intuitive left/right interaction
-            frame = cv2.flip(frame, 1)
+                # Simulated zone mapping
+                raw_led = int(max(1, min(8, int(((sim_x - 150) / 980) * 8) + 1)))
+                raw_b = int(max(0, min(100, int((720 - sim_y) / 720 * 100))))
+                detected = True
+                gesture = "POINTING" if (int(sim_angle) % 4 != 0) else "OPEN PALM"
 
-            # Analyze hand and gestures
-            detected, gesture, raw_led, raw_b, tip_px = analyzer.analyze(frame, brightness_mode=brightness_mode)
+                # Draw simulated hand pointer
+                cv2.circle(frame, (sim_x, sim_y), 18, (0, 220, 255), -1)
+                cv2.putText(frame, "SIMULATED FINGER", (sim_x - 70, sim_y - 25),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
-            # Process anti-jitter continuous brightness
+            # Continuous brightness smoothing
             if raw_b is not None:
                 smoothed_b = int(jitter_filter.update_continuous(raw_b))
                 comm.send_brightness(smoothed_b)
             else:
                 smoothed_b = int(jitter_filter.filtered_val) if jitter_filter.filtered_val is not None else 75
 
-            # Process debounced LED position
+            # Debounced LED position
             debounced_led = None
             if detected and raw_led is not None:
                 debounced_led = jitter_filter.update_discrete_position(raw_led)
@@ -404,9 +432,9 @@ def main():
                     comm.send_led_position(debounced_led)
                     current_pattern_str = f"POSITION {debounced_led}"
 
-            # Gesture-triggered predefined commands (with cooldown)
+            # Gesture-triggered commands
             now = time.time()
-            if now - last_gesture_cmd_time >= 2.0:
+            if now - last_gesture_cmd_time >= 2.5:
                 if gesture == "OPEN PALM":
                     comm.send_command("PATTERN:HEART")
                     current_pattern_str = "HEART"
@@ -420,57 +448,34 @@ def main():
                     current_pattern_str = "SCROLL: HOW YOU DOING?"
                     last_gesture_cmd_time = now
 
-            # Calculate FPS
             frame_count += 1
             if frame_count % 15 == 0:
                 elapsed = time.time() - start_time
                 fps = 15.0 / elapsed if elapsed > 0 else 30.0
                 start_time = time.time()
 
-            # Render HUD elements
             draw_hud(frame, debounced_led, smoothed_b, gesture, brightness_mode, fps, current_pattern_str)
 
-            # Highlight fingertip
             if tip_px is not None:
-                cv2.circle(frame, tip_px, 12, (0, 255, 255), -1)
-                cv2.circle(frame, tip_px, 16, (0, 180, 255), 2)
+                cv2.circle(frame, tip_px, 10, (0, 255, 255), -1)
+                cv2.circle(frame, tip_px, 14, (0, 180, 255), 2)
 
-            cv2.imshow("8x8 LED Matrix - Computer Vision Controller", frame)
+            # In GUI environments, display window
+            try:
+                cv2.imshow("AirTouch-88 Controller", frame)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q') or key == 27:
+                    break
+            except Exception:
+                pass
 
-            # Keyboard shortcuts
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord('q') or key == 27:
-                print("[SYSTEM] Exiting...")
-                break
-            elif key >= ord('1') and key <= ord('8'):
-                pos = key - ord('0')
-                comm.send_led_position(pos)
-                current_pattern_str = f"POSITION {pos}"
-            elif key == ord('h') or key == ord('H'):
-                comm.send_command("PATTERN:HEART")
-                current_pattern_str = "HEART"
-            elif key == ord('s') or key == ord('S'):
-                comm.send_command("PATTERN:SMILE")
-                current_pattern_str = "SMILE"
-            elif key == ord('c') or key == ord('C'):
-                comm.send_command("PATTERN:CLEAR")
-                current_pattern_str = "CLEARED"
-            elif key == ord('m') or key == ord('M'):
-                comm.send_command("MESSAGE:HELLO")
-                current_pattern_str = "SCROLL: HELLO"
-            elif key == ord('d') or key == ord('D'):
-                comm.send_command("MESSAGE:HOW YOU DOING?")
-                current_pattern_str = "SCROLL: HOW YOU DOING?"
-            elif key == ord('p') or key == ord('P'):
-                comm.send_command("ANIMATION:PULSE")
-                current_pattern_str = "ANIM: PULSE"
-            elif key == ord('g') or key == ord('G'):
-                brightness_mode = "PINCH" if brightness_mode == "HEIGHT" else "HEIGHT"
-                print(f"[SETTING] Brightness mode toggled to: {brightness_mode}")
+            time.sleep(0.03)
 
     finally:
-        cap.release()
+        if cap:
+            cap.release()
         cv2.destroyAllWindows()
+        print("[SYSTEM] Python CV Controller shut down cleanly.")
 
 
 if __name__ == "__main__":
