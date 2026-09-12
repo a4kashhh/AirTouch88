@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Project: Studio Matrix Controller (8x8 Hardware Interface)
+Project: ESHAN × MATRIX 8x8 // Cyber-Neural Interface
 Script:  cv_matrix_controller.py
 
 Design Language:
-  - High-end minimalist studio hardware aesthetic (Teenage Engineering / Dieter Rams).
-  - Deep matte obsidian & graphite palette with warm Gaussian LED illumination.
-  - Clean typographic hierarchy and hairline layout grid.
-  - Dedicated Fixed Air-Pad with 8x8 micro-guide points and single-fire touch delay.
-  - Pure, focused interaction: Zero clutter, zero unnecessary text buttons.
+  - BOLD, HIGH-OCTANE CYBER-NEURAL AESTHETIC.
+  - Deep obsidian void with electric cyan, hot magenta, and solar amber neon accents.
+  - Supercharged multi-layer Gaussian LED bloom & holographic reticles.
+  - Tactical Air-Pad with glowing alignment grid, charge-up dwell rings, and shockwave ripples.
+  - High-impact typography and punchy tactile action controls.
 ================================================================================
 """
 
@@ -81,7 +81,7 @@ class MatrixCommunicator:
         self.last_brightness_send_time = 0
         self.last_sent_brightness = -1
         self.last_sent_cmd = "IDLE"
-        self.last_cmd_status = "READY"
+        self.last_cmd_status = "ONLINE"
         self.tx_count = 0
 
     def send_command(self, cmd_str):
@@ -94,7 +94,7 @@ class MatrixCommunicator:
 
         try:
             self.sock.sendto(payload, (self.udp_ip, self.udp_port))
-            self.last_cmd_status = "TX OK"
+            self.last_cmd_status = "TX OK (UDP)"
         except Exception as e:
             self.last_cmd_status = f"UDP ERR"
 
@@ -225,46 +225,48 @@ class HandGestureAnalyzer:
 
             norm_pointer = (norm_pts[8][0], norm_pts[8][1])
 
-            # Subtle minimalist bone drawing (hairline muted bone structure)
+            # Sexy Glowing Cyber-Skeleton
             for start_idx, end_idx in HAND_CONNECTIONS:
-                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (70, 75, 85), 1, cv2.LINE_AA)
+                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (255, 200, 0), 2, cv2.LINE_AA)
             for i, pt in enumerate(pts):
                 if i in (4, 8):
-                    cv2.circle(frame_bgr, pt, 3, (240, 240, 245), -1, cv2.LINE_AA)
+                    cv2.circle(frame_bgr, pt, 5, (255, 50, 200), -1, cv2.LINE_AA)
+                    cv2.circle(frame_bgr, pt, 8, (255, 230, 0), 1, cv2.LINE_AA)
                 else:
-                    cv2.circle(frame_bgr, pt, 2, (100, 105, 115), -1, cv2.LINE_AA)
+                    cv2.circle(frame_bgr, pt, 3, (0, 240, 255), -1, cv2.LINE_AA)
 
             if is_pinching:
                 pinch_mid = ((thumb_tip[0] + index_tip[0]) // 2, (thumb_tip[1] + index_tip[1]) // 2)
-                cv2.circle(frame_bgr, pinch_mid, 8, (255, 255, 255), -1, cv2.LINE_AA)
+                cv2.circle(frame_bgr, pinch_mid, 14, (0, 255, 255), -1, cv2.LINE_AA)
+                cv2.circle(frame_bgr, pinch_mid, 22, (255, 0, 200), 2, cv2.LINE_AA)
 
         return hand_detected, gesture_name, index_tip_px, thumb_tip_px, is_pinching, norm_pointer
 
 
 # ==============================================================================
-# 3. MINIMALIST UI CONSTANTS & GEOMETRY
+# 3. HIGH-OCTANE CYBER UI CONSTANTS & GEOMETRY
 # ==============================================================================
 CANVAS_W = 1280
 CANVAS_H = 720
 
 # Dual Panel Layout
-PANEL_LEFT_X = 40
-PANEL_LEFT_Y = 54
-PANEL_LEFT_W = 575
+PANEL_LEFT_X = 35
+PANEL_LEFT_Y = 60
+PANEL_LEFT_W = 580
 PANEL_LEFT_H = 585
 
 PANEL_RIGHT_X = 645
-PANEL_RIGHT_Y = 54
-PANEL_RIGHT_W = 595
+PANEL_RIGHT_Y = 60
+PANEL_RIGHT_W = 600
 PANEL_RIGHT_H = 585
 
 # Camera Viewport inside Left Panel
-CAM_VIEW_X = PANEL_LEFT_X + 18
-CAM_VIEW_Y = PANEL_LEFT_Y + 48
-CAM_VIEW_W = PANEL_LEFT_W - 36  # 539
-CAM_VIEW_H = 430
+CAM_VIEW_X = PANEL_LEFT_X + 16
+CAM_VIEW_Y = PANEL_LEFT_Y + 46
+CAM_VIEW_W = PANEL_LEFT_W - 32  # 548
+CAM_VIEW_H = 435
 
-# Dedicated Fixed Control Area ("Air-Pad")
+# Dedicated Fixed Holographic Air-Pad
 control_area = {
     'x': CAM_VIEW_X + (CAM_VIEW_W - 360) // 2,  # centered
     'y': CAM_VIEW_Y + (CAM_VIEW_H - 360) // 2,
@@ -278,38 +280,40 @@ grid_dots = np.zeros((8, 8), dtype=np.uint8)
 
 # 8x8 Virtual Matrix Geometry (Centered inside right console)
 MATRIX_ORIGIN_X = PANEL_RIGHT_X + (PANEL_RIGHT_W - 7 * 42) // 2  # 797
-MATRIX_ORIGIN_Y = PANEL_RIGHT_Y + 130
+MATRIX_ORIGIN_Y = PANEL_RIGHT_Y + 128
 DOT_SPACING = 42
-DOT_RADIUS = 13
+DOT_RADIUS = 14
 
-# Minimal Linear Brightness Slider
-SLIDER_X = PANEL_RIGHT_X + 50
-SLIDER_Y = PANEL_RIGHT_Y + 468
-SLIDER_W = PANEL_RIGHT_W - 100  # 495
-SLIDER_H = 6
+# Glowing Neon Linear Brightness Slider
+SLIDER_X = PANEL_RIGHT_X + 45
+SLIDER_Y = PANEL_RIGHT_Y + 462
+SLIDER_W = PANEL_RIGHT_W - 90  # 510
+SLIDER_H = 10
 current_brightness = 75
 is_dragging_brightness = False
 
-# Minimalist Core Actions (Only 3 essential buttons, no clutter!)
-BTN_W = 145
-BTN_H = 34
+# Bold High-Voltage Action Buttons (4 punchy glowing controls)
+BTN_W = 124
+BTN_H = 36
+BTN_GAP = 14
 BTN_Y = PANEL_RIGHT_Y + 518
-BTN_START_X = PANEL_RIGHT_X + (PANEL_RIGHT_W - (3 * BTN_W + 2 * 20)) // 2  # centered
+BTN_START_X = PANEL_RIGHT_X + (PANEL_RIGHT_W - (4 * BTN_W + 3 * BTN_GAP)) // 2  # centered
 
 ACTION_BUTTONS = {
-    'CLEAR':  (BTN_START_X,                BTN_Y, BTN_W, BTN_H, "CLEAR"),
-    'HEART':  (BTN_START_X + BTN_W + 20,   BTN_Y, BTN_W, BTN_H, "HEART"),
-    'INVERT': (BTN_START_X + (BTN_W + 20)*2, BTN_Y, BTN_W, BTN_H, "INVERT")
+    'CLEAR':  (BTN_START_X,                         BTN_Y, BTN_W, BTN_H, "CLEAR",  (45, 45, 60),   (255, 220, 0)),
+    'HEART':  (BTN_START_X + (BTN_W + BTN_GAP),     BTN_Y, BTN_W, BTN_H, "HEART",  (80, 20, 60),   (255, 40, 220)),
+    'INVERT': (BTN_START_X + (BTN_W + BTN_GAP)*2,   BTN_Y, BTN_W, BTN_H, "INVERT", (20, 60, 80),   (0, 240, 255)),
+    'PULSE':  (BTN_START_X + (BTN_W + BTN_GAP)*3,   BTN_Y, BTN_W, BTN_H, "PULSE",  (70, 40, 20),   (0, 180, 255))
 }
 
 # Area Customization & Touch Delay Buttons (below Camera View)
-AREA_BTN_Y = CAM_VIEW_Y + CAM_VIEW_H + 20  # 498
-AREA_BTN_H = 30
+AREA_BTN_Y = CAM_VIEW_Y + CAM_VIEW_H + 18
+AREA_BTN_H = 32
 AREA_BUTTONS = {
-    'LOCK_TOGGLE': (CAM_VIEW_X + 5,   AREA_BTN_Y, 110, AREA_BTN_H),
-    'DELAY_CYCLE': (CAM_VIEW_X + 125, AREA_BTN_Y, 125, AREA_BTN_H),
-    'CYCLE_SIZE':  (CAM_VIEW_X + 260, AREA_BTN_Y, 120, AREA_BTN_H),
-    'RESET':       (CAM_VIEW_X + 390, AREA_BTN_Y, 95,  AREA_BTN_H)
+    'LOCK_TOGGLE': (CAM_VIEW_X + 5,   AREA_BTN_Y, 115, AREA_BTN_H),
+    'DELAY_CYCLE': (CAM_VIEW_X + 130, AREA_BTN_Y, 130, AREA_BTN_H),
+    'CYCLE_SIZE':  (CAM_VIEW_X + 270, AREA_BTN_Y, 120, AREA_BTN_H),
+    'RESET':       (CAM_VIEW_X + 400, AREA_BTN_Y, 95,  AREA_BTN_H)
 }
 
 # Touch Point Delay & Anti-Bounce Settings
@@ -345,7 +349,7 @@ def get_dot_at_xy(px, py):
         for c in range(8):
             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
             cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
-            if math.hypot(px - cx, py - cy) <= DOT_RADIUS + 7:
+            if math.hypot(px - cx, py - cy) <= DOT_RADIUS + 8:
                 return (r, c)
     return None
 
@@ -382,7 +386,7 @@ def on_mouse_event(event, x, y, flags, param):
     ay = control_area['y']
     aw = control_area['w']
     ah = control_area['h']
-    resize_handle_rect = (ax + aw - 20, ay + ah - 20, 20, 20)
+    resize_handle_rect = (ax + aw - 24, ay + ah - 24, 24, 24)
 
     if event == cv2.EVENT_LBUTTONDOWN:
         # 1. Click on Area Toolbar Buttons
@@ -448,7 +452,7 @@ def on_mouse_event(event, x, y, flags, param):
             comm.send_brightness(current_brightness)
             return
 
-        # 5. Minimal Action Buttons
+        # 5. High-Voltage Action Buttons
         for key, btn in ACTION_BUTTONS.items():
             rect = (btn[0], btn[1], btn[2], btn[3])
             if is_inside_rect(x, y, rect):
@@ -471,6 +475,8 @@ def on_mouse_event(event, x, y, flags, param):
                 elif key == 'INVERT':
                     grid_dots[:] = 1 - grid_dots
                     comm.send_command("PATTERN:INVERT")
+                elif key == 'PULSE':
+                    comm.send_command("ANIMATION:PULSE")
                 return
 
     elif event == cv2.EVENT_MOUSEMOVE:
@@ -499,69 +505,72 @@ def on_mouse_event(event, x, y, flags, param):
 
 
 # ==============================================================================
-# 6. MINIMALIST RENDERING SYSTEM
+# 6. BOLD CYBER-NEURAL RENDERING SYSTEM
 # ==============================================================================
-def draw_minimal_topbar(canvas, ip, port, fps, gesture):
-    """Draws a clean, refined header without heavy blocks or garish borders."""
-    # Brand
-    cv2.putText(canvas, "MATRIX 8x8", (42, 33), cv2.FONT_HERSHEY_DUPLEX, 0.58, (240, 240, 245), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "STUDIO CONTROLLER", (168, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (110, 115, 125), 1, cv2.LINE_AA)
+def draw_bold_header(canvas, ip, port, fps, gesture):
+    """Draws an electric cyber-gradient top header."""
+    # Top Bar Solid Floor
+    cv2.rectangle(canvas, (0, 0), (CANVAS_W, 50), (14, 12, 22), -1)
 
-    # Active Gesture Status (Center-aligned subtle text)
+    # Electric Neon Dual-Tone Accent Line (Cyan -> Magenta)
+    half_w = CANVAS_W // 2
+    cv2.line(canvas, (0, 50), (half_w, 50), (255, 230, 0), 2, cv2.LINE_AA)
+    cv2.line(canvas, (half_w, 50), (CANVAS_W, 50), (255, 40, 220), 2, cv2.LINE_AA)
+
+    # Title with Glowing Cyber Badge
+    cv2.circle(canvas, (24, 25), 6, (255, 230, 0), -1, cv2.LINE_AA)
+    cv2.circle(canvas, (24, 25), 10, (255, 50, 200), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "ESHAN MATRIX", (42, 33), cv2.FONT_HERSHEY_DUPLEX, 0.68, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(canvas, "// NEURAL PRO 8x8", (215, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 255), 1, cv2.LINE_AA)
+
+    # Gesture Dynamic Badge (Center)
     if gesture and gesture != "NONE":
-        g_text = f"●  {gesture}"
-        g_color = (255, 255, 255) if gesture == "PINCH" else (160, 210, 255)
+        g_col = (0, 255, 255) if gesture == "PINCH" else (255, 50, 200)
+        cv2.rectangle(canvas, (540, 10), (740, 40), (28, 20, 38), -1)
+        cv2.rectangle(canvas, (540, 10), (740, 40), g_col, 2, cv2.LINE_AA)
+        cv2.putText(canvas, f">> {gesture}", (560, 30), cv2.FONT_HERSHEY_DUPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
     else:
-        g_text = "○  IDLE"
-        g_color = (90, 95, 105)
-    cv2.putText(canvas, g_text, (580, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.42, g_color, 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (540, 10), (740, 40), (20, 18, 28), -1)
+        cv2.rectangle(canvas, (540, 10), (740, 40), (60, 50, 75), 1, cv2.LINE_AA)
+        cv2.putText(canvas, ">> STANDBY", (580, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (120, 110, 135), 1, cv2.LINE_AA)
 
-    # Telemetry Status (Right-aligned, whisper light)
-    status_str = f"ESP32 · {ip}:{port}   |   {fps:.0f} FPS   |   [Q] EXIT"
-    cv2.putText(canvas, status_str, (880, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (110, 115, 125), 1, cv2.LINE_AA)
+    # Telemetry Status (Right)
+    cv2.putText(canvas, f"ESP32: {ip}:{port}", (870, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 180), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"{fps:.0f} FPS", (1120, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 200, 50), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "[Q] EXIT", (1200, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 150, 175), 1, cv2.LINE_AA)
 
 
-def draw_studio_card(canvas, x, y, w, h, title=""):
-    """Draws a sleek matte dark chassis with subtle hairline border."""
-    cv2.rectangle(canvas, (x, y), (x + w, y + h), (18, 18, 22), -1)
-    cv2.rectangle(canvas, (x, y), (x + w, y + h), (34, 34, 40), 1)
+def draw_cyber_chassis(canvas, x, y, w, h, title=""):
+    """Draws a deep obsidian card with glowing corner accents."""
+    cv2.rectangle(canvas, (x, y), (x + w, y + h), (18, 16, 26), -1)
+    cv2.rectangle(canvas, (x, y), (x + w, y + h), (48, 42, 65), 1)
+
+    # Glowing Corner Brackets
+    c_len = 16
+    for cx, cy, dx, dy in [(x, y, 1, 1), (x + w, y, -1, 1), (x, y + h, 1, -1), (x + w, y + h, -1, -1)]:
+        cv2.line(canvas, (cx, cy), (cx + dx * c_len, cy), (255, 200, 0), 2, cv2.LINE_AA)
+        cv2.line(canvas, (cx, cy), (cx, cy + dy * c_len), (255, 200, 0), 2, cv2.LINE_AA)
 
     if title:
-        cv2.putText(canvas, title, (x + 18, y + 26), cv2.FONT_HERSHEY_DUPLEX, 0.42, (180, 185, 195), 1, cv2.LINE_AA)
+        cv2.putText(canvas, title, (x + 20, y + 28), cv2.FONT_HERSHEY_DUPLEX, 0.48, (255, 240, 120), 1, cv2.LINE_AA)
 
 
 def draw_camera_feed(canvas, frame_cam):
-    """Subtly desaturates and embeds the video feed inside the left chassis."""
-    # Darken and desaturate slightly for high-end cinematic blend
+    """Embeds the camera feed inside the left chassis with cyber-reticle corners."""
     cam_resized = cv2.resize(frame_cam, (CAM_VIEW_W, CAM_VIEW_H))
-    cam_dim = cv2.addWeighted(cam_resized, 0.85, np.zeros_like(cam_resized), 0.15, 0)
-    canvas[CAM_VIEW_Y:CAM_VIEW_Y + CAM_VIEW_H, CAM_VIEW_X:CAM_VIEW_X + CAM_VIEW_W] = cam_dim
+    canvas[CAM_VIEW_Y:CAM_VIEW_Y + CAM_VIEW_H, CAM_VIEW_X:CAM_VIEW_X + CAM_VIEW_W] = cam_resized
 
-    # Hairline frame
     cv2.rectangle(canvas, (CAM_VIEW_X, CAM_VIEW_Y),
-                  (CAM_VIEW_X + CAM_VIEW_W, CAM_VIEW_Y + CAM_VIEW_H), (34, 34, 40), 1)
-
-    # Subtle corner cross marks
-    m = 10
-    corners = [
-        (CAM_VIEW_X, CAM_VIEW_Y),
-        (CAM_VIEW_X + CAM_VIEW_W, CAM_VIEW_Y),
-        (CAM_VIEW_X, CAM_VIEW_Y + CAM_VIEW_H),
-        (CAM_VIEW_X + CAM_VIEW_W, CAM_VIEW_Y + CAM_VIEW_H)
-    ]
-    for cx, cy in corners:
-        dx = 1 if cx == CAM_VIEW_X else -1
-        dy = 1 if cy == CAM_VIEW_Y else -1
-        cv2.line(canvas, (cx, cy), (cx + dx * m, cy), (70, 75, 85), 1, cv2.LINE_AA)
-        cv2.line(canvas, (cx, cy), (cx, cy + dy * m), (70, 75, 85), 1, cv2.LINE_AA)
+                  (CAM_VIEW_X + CAM_VIEW_W, CAM_VIEW_Y + CAM_VIEW_H), (60, 50, 80), 1)
 
 
-def draw_fixed_air_pad(canvas, active_cell, dwell_progress=0.0, tip_px=None):
+def draw_holographic_air_pad(canvas, active_cell, dwell_progress=0.0, tip_px=None):
     """
-    Renders an architectural-grade Air-Pad with:
-      - Translucent matte dark glass surface
-      - Subtle 8x8 micro-dot guide grid
-      - Smooth target focus and clean progress gauge
+    Renders an electric holographic Air-Pad with:
+      - Neon Cyan / Magenta cyber-grid overlay
+      - Illuminated target cell with coordinates
+      - High-voltage charge-up reticle (Cyan -> Emerald -> Gold)
+      - Shockwave ripple animations
     """
     ax = control_area['x']
     ay = control_area['y']
@@ -569,25 +578,33 @@ def draw_fixed_air_pad(canvas, active_cell, dwell_progress=0.0, tip_px=None):
     ah = control_area['h']
     is_locked = control_area['locked']
 
-    # Translucent glass fill
-    glass = canvas.copy()
-    cv2.rectangle(glass, (ax, ay), (ax + aw, ay + ah), (14, 15, 18), -1)
-    cv2.addWeighted(glass, 0.40, canvas, 0.60, 0, canvas)
+    # Translucent cyber-tint
+    overlay = canvas.copy()
+    cv2.rectangle(overlay, (ax, ay), (ax + aw, ay + ah), (25, 15, 35), -1)
+    cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
 
-    # Subtle boundary
-    pad_border = (60, 65, 75) if is_locked else (200, 140, 60)
-    cv2.rectangle(canvas, (ax, ay), (ax + aw, ay + ah), pad_border, 1)
+    # High-Voltage Neon Border
+    pad_border = (255, 230, 0) if is_locked else (0, 160, 255)
+    cv2.rectangle(canvas, (ax, ay), (ax + aw, ay + ah), pad_border, 2)
 
-    # Micro-dot 8x8 grid alignment
+    # 8x8 Grid with Coordinates
     cw = aw / 8.0
     ch = ah / 8.0
-    for r in range(8):
-        for c in range(8):
-            px = int(ax + (c + 0.5) * cw)
-            py = int(ay + (r + 0.5) * ch)
-            cv2.circle(canvas, (px, py), 1, (50, 55, 65), -1)
+    for i in range(1, 8):
+        gx = int(ax + i * cw)
+        gy = int(ay + i * ch)
+        cv2.line(canvas, (gx, ay), (gx, ay + ah), (55, 45, 75), 1)
+        cv2.line(canvas, (ax, gy), (ax + aw, gy), (55, 45, 75), 1)
 
-    # Active hover cell highlight
+    # Micro row/column coordinates on perimeter
+    for c in range(8):
+        lbl_x = int(ax + c * cw + cw / 2 - 4)
+        cv2.putText(canvas, str(c), (lbl_x, ay - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 220, 0), 1, cv2.LINE_AA)
+    for r in range(8):
+        lbl_y = int(ay + r * ch + ch / 2 + 4)
+        cv2.putText(canvas, str(r), (ax - 14, lbl_y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 220, 0), 1, cv2.LINE_AA)
+
+    # Active Target Cell Highlight
     if active_cell is not None:
         r, c = active_cell
         cx1 = int(ax + c * cw)
@@ -595,65 +612,91 @@ def draw_fixed_air_pad(canvas, active_cell, dwell_progress=0.0, tip_px=None):
         cx2 = int(cx1 + cw)
         cy2 = int(cy1 + ch)
 
-        hover_overlay = canvas.copy()
-        cv2.rectangle(hover_overlay, (cx1, cy1), (cx2, cy2), (255, 255, 255), -1)
-        cv2.addWeighted(hover_overlay, 0.12, canvas, 0.88, 0, canvas)
-        cv2.rectangle(canvas, (cx1, cy1), (cx2, cy2), (180, 185, 195), 1)
+        cell_glow = canvas.copy()
+        cv2.rectangle(cell_glow, (cx1, cy1), (cx2, cy2), (255, 230, 0), -1)
+        cv2.addWeighted(cell_glow, 0.38, canvas, 0.62, 0, canvas)
 
-        # Coordinate label (minimalistic monospace)
-        coord_lbl = f"{r:02d} · {c:02d}"
-        cv2.putText(canvas, coord_lbl, (cx1 + 4, cy1 + 13),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.30, (200, 205, 215), 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (cx1, cy1), (cx2, cy2), (255, 255, 255), 2)
+        coord_lbl = f"[{r}:{c}]"
+        cv2.putText(canvas, coord_lbl, (cx1 + 4, cy1 + 14),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
 
-    # Fingertip Cursor & Dwell Progress Ring
+    # High-Voltage Charging Reticle
     if tip_px is not None and is_inside_rect(tip_px[0], tip_px[1], (ax, ay, aw, ah)):
         tx, ty = tip_px
-        # Center precision dot
-        cv2.circle(canvas, (tx, ty), 3, (255, 255, 255), -1, cv2.LINE_AA)
-        cv2.circle(canvas, (tx, ty), 8, (160, 165, 175), 1, cv2.LINE_AA)
+        cv2.circle(canvas, (tx, ty), 4, (255, 255, 255), -1, cv2.LINE_AA)
+        cv2.circle(canvas, (tx, ty), 12, (255, 230, 0), 2, cv2.LINE_AA)
+        cv2.line(canvas, (tx - 16, ty), (tx + 16, ty), (255, 230, 0), 1, cv2.LINE_AA)
+        cv2.line(canvas, (tx, ty - 16), (tx, ty + 16), (255, 230, 0), 1, cv2.LINE_AA)
 
-        # Whisper-thin dwell progress arc
+        # Dynamic Multi-Stage Dwell Charge Arc
         if dwell_progress > 0.0:
             end_ang = int(dwell_progress * 360)
-            cv2.ellipse(canvas, (tx, ty), (15, 15), -90, 0, end_ang, (255, 255, 255), 2, cv2.LINE_AA)
+            if dwell_progress < 0.6:
+                arc_col = (255, 230, 0)       # Electric Cyan
+            elif dwell_progress < 0.95:
+                arc_col = (0, 255, 120)       # Hot Emerald
+            else:
+                arc_col = (0, 255, 255)       # Solar Gold
+            cv2.ellipse(canvas, (tx, ty), (18, 18), -90, 0, end_ang, arc_col, 3, cv2.LINE_AA)
 
-    # Pad Label
-    tag = "AIR-PAD" if is_locked else "AIR-PAD (DRAG / RESIZE)"
-    cv2.putText(canvas, tag, (ax + 6, ay - 8),
-                cv2.FONT_HERSHEY_DUPLEX, 0.36, (120, 125, 135), 1, cv2.LINE_AA)
+    # Tag Banner
+    tag = "AIR-PAD // LOCKED" if is_locked else "AIR-PAD // DRAG / RESIZE"
+    cv2.rectangle(canvas, (ax, ay - 24), (ax + 175, ay), pad_border, -1)
+    cv2.putText(canvas, tag, (ax + 8, ay - 7), cv2.FONT_HERSHEY_DUPLEX, 0.36, (15, 12, 22), 1, cv2.LINE_AA)
+
+    if not is_locked:
+        hx = ax + aw - 22
+        hy = ay + ah - 22
+        cv2.rectangle(canvas, (hx, hy), (ax + aw, ay + ah), (0, 180, 255), -1)
+        cv2.putText(canvas, "+", (hx + 5, hy + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 2)
 
 
-def draw_minimal_button(canvas, rect, label, is_hovered=False, is_active=False):
-    """Draws an ultra-clean, studio-grade button."""
+def draw_cyber_button(canvas, rect, label, is_hovered=False, active_color=(0, 240, 255), is_active=False):
+    """Draws a bold, punchy cyber button with glowing border and hover intensity."""
     bx, by, bw, bh = rect
-    bg = (30, 30, 36) if is_hovered else (22, 22, 26)
+    bg = (38, 32, 52) if is_hovered else (24, 20, 34)
     if is_active:
-        bg = (40, 42, 50)
-    border = (90, 95, 105) if is_hovered else (45, 45, 52)
-    txt_col = (255, 255, 255) if is_hovered else (180, 185, 195)
+        bg = (50, 40, 70)
+    border = active_color if is_hovered else tuple(int(c * 0.7) for c in active_color)
 
     cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg, -1)
-    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border, 1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border, 2 if is_hovered else 1)
 
-    # Center label
-    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.38, 1)
+    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
     tx = bx + (bw - tw) // 2
     ty = by + (bh + th) // 2
-    cv2.putText(canvas, label, (tx, ty), cv2.FONT_HERSHEY_SIMPLEX, 0.38, txt_col, 1, cv2.LINE_AA)
+    txt_col = (255, 255, 255) if is_hovered else (220, 225, 235)
+    cv2.putText(canvas, label, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.44, txt_col, 1, cv2.LINE_AA)
 
 
 def draw_virtual_matrix(canvas, active_cell=None):
     """
-    Renders a stunning, physical-hardware-inspired 8x8 matrix
-    with authentic Gaussian bloom and tactile micro-lenses.
+    Renders the supercharged 8x8 hardware matrix
+    with rich cinematic Gaussian bloom and brilliant core illumination.
     """
-    # Active LED count
     lit_count = int(np.sum(grid_dots))
-    count_str = f"{lit_count} / 64 ACTIVE"
-    cv2.putText(canvas, count_str, (PANEL_RIGHT_X + PANEL_RIGHT_W - 125, PANEL_RIGHT_Y + 26),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.36, (130, 135, 145), 1, cv2.LINE_AA)
+    badge_str = f"{lit_count} / 64 LIT"
+    cv2.rectangle(canvas, (PANEL_RIGHT_X + PANEL_RIGHT_W - 130, PANEL_RIGHT_Y + 12),
+                  (PANEL_RIGHT_X + PANEL_RIGHT_W - 20, PANEL_RIGHT_Y + 36), (36, 24, 48), -1)
+    cv2.rectangle(canvas, (PANEL_RIGHT_X + PANEL_RIGHT_W - 130, PANEL_RIGHT_Y + 12),
+                  (PANEL_RIGHT_X + PANEL_RIGHT_W - 20, PANEL_RIGHT_Y + 36), (255, 40, 220), 1)
+    cv2.putText(canvas, badge_str, (PANEL_RIGHT_X + PANEL_RIGHT_W - 118, PANEL_RIGHT_Y + 28),
+                cv2.FONT_HERSHEY_DUPLEX, 0.40, (255, 120, 230), 1, cv2.LINE_AA)
 
-    # Render All 64 Circular Apertures
+    # Column Numbers
+    for c in range(8):
+        cx = MATRIX_ORIGIN_X + c * DOT_SPACING
+        cv2.putText(canvas, f"C{c}", (cx - 8, MATRIX_ORIGIN_Y - 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 130, 160), 1, cv2.LINE_AA)
+
+    # Row Numbers
+    for r in range(8):
+        cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
+        cv2.putText(canvas, f"R{r}", (MATRIX_ORIGIN_X - 32, cy + 5),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 130, 160), 1, cv2.LINE_AA)
+
+    # Render All 64 Glowing LEDs
     for r in range(8):
         for c in range(8):
             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
@@ -662,79 +705,82 @@ def draw_virtual_matrix(canvas, active_cell=None):
             is_hovered = (active_cell == (r, c))
 
             if is_lit:
-                # Atmospheric multi-stage warm amber-red glow
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 9, (8, 20, 120), -1, cv2.LINE_AA)     # Ambient falloff
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 4, (15, 45, 210), -1, cv2.LINE_AA)    # Medium bloom
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (30, 85, 255), -1, cv2.LINE_AA)        # Vibrant core
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS - 5, (130, 180, 255), -1, cv2.LINE_AA)  # Hot center
-                cv2.circle(canvas, (cx - 3, cy - 3), 2, (255, 255, 255), -1, cv2.LINE_AA)       # Specular pinhole
+                # Supercharged multi-layer Gaussian bloom (Crimson -> Fiery Red -> Hot Gold -> White Core)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 10, (15, 20, 180), -1, cv2.LINE_AA)    # Outer atmospheric aura
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 5, (20, 60, 255), -1, cv2.LINE_AA)     # Radiant bloom
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (40, 140, 255), -1, cv2.LINE_AA)        # Vibrant fiery body
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS - 5, (160, 220, 255), -1, cv2.LINE_AA)   # Hot solar core
+                cv2.circle(canvas, (cx - 3, cy - 3), 3, (255, 255, 255), -1, cv2.LINE_AA)        # Diamond reflection
             else:
-                # Deep recessed matte lens
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (26, 26, 30), -1, cv2.LINE_AA)
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (42, 42, 48), 1, cv2.LINE_AA)
-                cv2.circle(canvas, (cx, cy), 2, (38, 38, 44), -1, cv2.LINE_AA)
+                # Sleek glossy dark lens
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (30, 26, 38), -1, cv2.LINE_AA)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (70, 60, 90), 1, cv2.LINE_AA)
+                cv2.circle(canvas, (cx, cy), 3, (50, 42, 62), -1, cv2.LINE_AA)
 
-            # Quiet hover focus ring
+            # High-Impact Hover Reticle
             if is_hovered:
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 5, (220, 225, 235), 1, cv2.LINE_AA)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 8, (255, 230, 0), 2, cv2.LINE_AA)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 12, (255, 40, 220), 1, cv2.LINE_AA)
 
-    # Click Ripple Animation
+    # Shockwave Ripple Animation
     global click_ripple_anim
     if click_ripple_anim is not None:
         rx, ry, r_time = click_ripple_anim
         elapsed = time.time() - r_time
-        if elapsed <= 0.30:
-            radius = int(DOT_RADIUS + elapsed * 55)
-            alpha = max(0, int(220 * (1.0 - elapsed / 0.30)))
-            cv2.circle(canvas, (rx, ry), radius, (alpha, alpha, alpha), 1, cv2.LINE_AA)
+        if elapsed <= 0.35:
+            radius = int(DOT_RADIUS + elapsed * 75)
+            alpha = max(0, int(255 * (1.0 - elapsed / 0.35)))
+            cv2.circle(canvas, (rx, ry), radius, (alpha, alpha, 255), 2, cv2.LINE_AA)
         else:
             click_ripple_anim = None
 
 
-def draw_linear_brightness(canvas, brightness, is_dragging):
-    """Draws a minimalist linear slider track."""
-    # Label & Value
-    cv2.putText(canvas, "INTENSITY", (SLIDER_X, SLIDER_Y - 14),
-                cv2.FONT_HERSHEY_DUPLEX, 0.36, (130, 135, 145), 1, cv2.LINE_AA)
-    cv2.putText(canvas, f"{brightness}%", (SLIDER_X + SLIDER_W - 32, SLIDER_Y - 14),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.36, (220, 225, 235), 1, cv2.LINE_AA)
+def draw_neon_brightness(canvas, brightness, is_dragging):
+    """Draws a glowing neon linear slider with dynamic gradient track."""
+    cv2.putText(canvas, "BRIGHTNESS INTENSITY", (SLIDER_X, SLIDER_Y - 14),
+                cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 240, 255), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"{brightness}%", (SLIDER_X + SLIDER_W - 40, SLIDER_Y - 14),
+                cv2.FONT_HERSHEY_DUPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
 
-    # 4px Rail Track
-    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), (30, 30, 36), -1)
+    # Base Track
+    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), (34, 28, 46), -1)
+    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), (70, 60, 95), 1)
 
-    # Active Fill
+    # Glowing Gradient Fill
     fill_w = int(SLIDER_W * (brightness / 100.0))
-    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + fill_w, SLIDER_Y + SLIDER_H), (200, 205, 215), -1)
+    fill_col = (255, 230, 0) if is_dragging else (255, 180, 0)
+    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + fill_w, SLIDER_Y + SLIDER_H), fill_col, -1)
 
-    # Slider Knob
+    # Radiant Knob
     knob_x = SLIDER_X + fill_w
     knob_y = SLIDER_Y + SLIDER_H // 2
-    cv2.circle(canvas, (knob_x, knob_y), 6, (255, 255, 255), -1, cv2.LINE_AA)
-    cv2.circle(canvas, (knob_x, knob_y), 7, (40, 40, 48), 1, cv2.LINE_AA)
+    cv2.circle(canvas, (knob_x, knob_y), 9, (255, 255, 255), -1, cv2.LINE_AA)
+    cv2.circle(canvas, (knob_x, knob_y), 13, (255, 50, 200), 2, cv2.LINE_AA)
 
 
-def draw_bottom_bar(canvas, active_cell, last_cmd, cmd_status):
-    """Draws a clean, quiet bottom telemetry footer."""
-    bar_y = 668
-    cv2.line(canvas, (40, bar_y), (CANVAS_W - 40, bar_y), (28, 28, 34), 1)
+def draw_bottom_telemetry(canvas, active_cell, last_cmd, cmd_status):
+    """Draws the high-contrast bottom status HUD."""
+    bar_y = 665
+    cv2.rectangle(canvas, (0, bar_y), (CANVAS_W, CANVAS_H), (14, 12, 22), -1)
+    cv2.line(canvas, (0, bar_y), (CANVAS_W, bar_y), (48, 40, 65), 1)
 
-    # Left: Target Coordinate
+    # Target
     if active_cell:
         r, c = active_cell
-        target_str = f"TARGET · ROW {r:02d}  COL {c:02d}  [#{r*8 + c + 1:02d}]"
-        t_col = (240, 240, 245)
+        target_str = f"TARGET >> ROW {r} : COL {c} [DOT #{r*8 + c + 1:02d}]"
+        t_col = (0, 255, 120)
     else:
-        target_str = "TARGET · NONE"
-        t_col = (100, 105, 115)
-    cv2.putText(canvas, target_str, (45, bar_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.38, t_col, 1, cv2.LINE_AA)
+        target_str = "TARGET >> AIR-PAD READY"
+        t_col = (130, 120, 150)
+    cv2.putText(canvas, target_str, (40, bar_y + 32), cv2.FONT_HERSHEY_DUPLEX, 0.44, t_col, 1, cv2.LINE_AA)
 
-    # Center: Last Dispatch
-    disp_str = f"STATUS · {cmd_status} ({last_cmd})"
-    cv2.putText(canvas, disp_str, (480, bar_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 135, 145), 1, cv2.LINE_AA)
+    # Last Command Status
+    disp_str = f"DISPATCH: {cmd_status} // {last_cmd}"
+    cv2.putText(canvas, disp_str, (520, bar_y + 32), cv2.FONT_HERSHEY_DUPLEX, 0.44, (255, 200, 0), 1, cv2.LINE_AA)
 
-    # Right: Minimal Keyboard Shortcuts
-    keys_str = "[C] CLEAR   [H] HEART   [I] INVERT   [L] LOCK PAD"
-    cv2.putText(canvas, keys_str, (850, bar_y + 26), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (100, 105, 115), 1, cv2.LINE_AA)
+    # Shortcut Hints
+    keys_str = "[C] CLEAR  [H] HEART  [I] INVERT  [P] PULSE  [L] LOCK"
+    cv2.putText(canvas, keys_str, (880, bar_y + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 140, 170), 1, cv2.LINE_AA)
 
 
 # ==============================================================================
@@ -745,7 +791,7 @@ def main():
     global current_brightness, click_ripple_anim
     global dwell_lockout_dot, dwell_preset_idx, dwell_trigger_time
 
-    parser = argparse.ArgumentParser(description="Studio Matrix Controller")
+    parser = argparse.ArgumentParser(description="ESHAN MATRIX // Cyber-Neural Interface")
     parser.add_argument("--ip", type=str, default="10.194.177.102", help="ESP32-C3 Wi-Fi IP address")
     parser.add_argument("--port", type=int, default=8888, help="ESP32-C3 UDP port (default: 8888)")
     parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port")
@@ -759,13 +805,13 @@ def main():
     FRAME_INTERVAL = 1.0 / TARGET_FPS
     dwell_trigger_time = float(args.dwell)
 
-    print("\n" + "=" * 60, flush=True)
-    print("  STUDIO MATRIX CONTROLLER · 8x8 HARDWARE INTERFACE", flush=True)
+    print("\n" + "=" * 64, flush=True)
+    print("  ESHAN MATRIX 8x8 // BOLD CYBER-NEURAL CONTROLLER", flush=True)
     print(f"  Target ESP32-C3 IP:   {args.ip}:{args.port}", flush=True)
     if args.serial:
         print(f"  Serial Fallback:      {args.serial}", flush=True)
     print(f"  Touch Point Delay:    {dwell_trigger_time:.2f}s", flush=True)
-    print("=" * 60 + "\n", flush=True)
+    print("=" * 64 + "\n", flush=True)
 
     comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial)
     analyzer = HandGestureAnalyzer()
@@ -784,7 +830,7 @@ def main():
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
 
-    WINDOW_NAME = "Studio Matrix Controller"
+    WINDOW_NAME = "ESHAN MATRIX // Cyber-Neural Interface"
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, CANVAS_W, CANVAS_H)
     cv2.setMouseCallback(WINDOW_NAME, on_mouse_event, comm)
@@ -815,7 +861,7 @@ def main():
                         int(CAM_VIEW_Y + tip_px_raw[1] * scale_y)
                     )
             else:
-                frame_cam = np.full((CAM_VIEW_H, CAM_VIEW_W, 3), 20, dtype=np.uint8)
+                frame_cam = np.full((CAM_VIEW_H, CAM_VIEW_W, 3), 22, dtype=np.uint8)
                 sim_angle += 0.03
                 ax = control_area['x']
                 ay = control_area['y']
@@ -831,9 +877,9 @@ def main():
                 cam_sim_x = sim_x - CAM_VIEW_X
                 cam_sim_y = sim_y - CAM_VIEW_Y
                 if 0 <= cam_sim_x < CAM_VIEW_W and 0 <= cam_sim_y < CAM_VIEW_H:
-                    cv2.circle(frame_cam, (cam_sim_x, cam_sim_y), 6, (240, 240, 245), -1, cv2.LINE_AA)
+                    cv2.circle(frame_cam, (cam_sim_x, cam_sim_y), 8, (255, 230, 0), -1, cv2.LINE_AA)
 
-            # 2. Main Canvas (Deep Void Obsidian)
+            # 2. Main Canvas (Deep Midnight Void)
             canvas = np.full((CANVAS_H, CANVAS_W, 3), 12, dtype=np.uint8)
 
             # 3. Hand Interaction Inside Fixed Control Area
@@ -897,39 +943,43 @@ def main():
             last_pinch_state = is_pinching
 
             # 4. Render UI Components
-            # Left & Right Chassis Panels
-            draw_studio_card(canvas, PANEL_LEFT_X, PANEL_LEFT_Y, PANEL_LEFT_W, PANEL_LEFT_H, "AIR-PAD SURFACE")
-            draw_studio_card(canvas, PANEL_RIGHT_X, PANEL_RIGHT_Y, PANEL_RIGHT_W, PANEL_RIGHT_H, "TACTILE 8x8 ARRAY")
+            draw_cyber_chassis(canvas, PANEL_LEFT_X, PANEL_LEFT_Y, PANEL_LEFT_W, PANEL_LEFT_H, "HOLOGRAPHIC AIR-PAD")
+            draw_cyber_chassis(canvas, PANEL_RIGHT_X, PANEL_RIGHT_Y, PANEL_RIGHT_W, PANEL_RIGHT_H, "8x8 HARDWARE MATRIX")
 
-            # Camera Viewport & Air-Pad
+            # Left Viewport & Holographic Pad
             draw_camera_feed(canvas, frame_cam)
-            draw_fixed_air_pad(canvas, active_cell=active_cell, dwell_progress=dwell_progress, tip_px=tip_canvas)
+            draw_holographic_air_pad(canvas, active_cell=active_cell, dwell_progress=dwell_progress, tip_px=tip_canvas)
 
-            # Left Toolbar Buttons
+            # Left Toolbar Cyber Buttons
             is_locked = control_area['locked']
-            lock_label = "LOCKED" if is_locked else "EDITING"
-            draw_minimal_button(canvas, AREA_BUTTONS['LOCK_TOGGLE'], lock_label,
-                                is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['LOCK_TOGGLE']),
-                                is_active=is_locked)
-            draw_minimal_button(canvas, AREA_BUTTONS['DELAY_CYCLE'], f"HOLD: {dwell_trigger_time:.2f}s",
-                                is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['DELAY_CYCLE']))
-            draw_minimal_button(canvas, AREA_BUTTONS['CYCLE_SIZE'], f"SIZE: {control_area['w']}px",
-                                is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['CYCLE_SIZE']))
-            draw_minimal_button(canvas, AREA_BUTTONS['RESET'], "RESET",
-                                is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['RESET']))
+            lock_txt = "[ LOCKED ]" if is_locked else "[ EDITING ]"
+            lock_col = (0, 255, 120) if is_locked else (0, 160, 255)
+            draw_cyber_button(canvas, AREA_BUTTONS['LOCK_TOGGLE'], lock_txt,
+                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['LOCK_TOGGLE']),
+                              active_color=lock_col, is_active=is_locked)
+            draw_cyber_button(canvas, AREA_BUTTONS['DELAY_CYCLE'], f"HOLD {dwell_trigger_time:.2f}s",
+                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['DELAY_CYCLE']),
+                              active_color=(255, 230, 0))
+            draw_cyber_button(canvas, AREA_BUTTONS['CYCLE_SIZE'], f"{control_area['w']}px",
+                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['CYCLE_SIZE']),
+                              active_color=(255, 40, 220))
+            draw_cyber_button(canvas, AREA_BUTTONS['RESET'], "RESET",
+                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['RESET']),
+                              active_color=(0, 200, 255))
 
-            # Right Panel: 8x8 Matrix, Linear Brightness Slider, Actions
+            # Right Panel: Glowing 8x8 Matrix, Neon Slider, Punchy Action Buttons
             draw_virtual_matrix(canvas, active_cell=active_cell)
-            draw_linear_brightness(canvas, current_brightness, is_dragging_brightness)
+            draw_neon_brightness(canvas, current_brightness, is_dragging_brightness)
 
             for key, btn in ACTION_BUTTONS.items():
                 rect = (btn[0], btn[1], btn[2], btn[3])
-                draw_minimal_button(canvas, rect, btn[4],
-                                    is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], rect))
+                draw_cyber_button(canvas, rect, btn[4],
+                                  is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], rect),
+                                  active_color=btn[6])
 
-            # Header & Footer
-            draw_minimal_topbar(canvas, comm.udp_ip, comm.udp_port, fps, gesture)
-            draw_bottom_bar(canvas, active_cell, comm.last_sent_cmd, comm.last_cmd_status)
+            # Bold Header & Telemetry
+            draw_bold_header(canvas, comm.udp_ip, comm.udp_port, fps, gesture)
+            draw_bottom_telemetry(canvas, active_cell, comm.last_sent_cmd, comm.last_cmd_status)
 
             # 5. Display Window
             cv2.imshow(WINDOW_NAME, canvas)
@@ -957,6 +1007,8 @@ def main():
             elif key in (ord('i'), ord('I')):
                 grid_dots[:] = 1 - grid_dots
                 comm.send_command("PATTERN:INVERT")
+            elif key in (ord('p'), ord('P')):
+                comm.send_command("ANIMATION:PULSE")
             elif key in (ord('l'), ord('L')):
                 control_area['locked'] = not control_area['locked']
             elif key in (ord('d'), ord('D')):
