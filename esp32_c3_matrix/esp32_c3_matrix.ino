@@ -1,490 +1,1231 @@
-/**
- * ============================================================================
- * Project: Computer Vision Controlled Custom 8x8 LED Matrix
- * Target:  ESP32-C3 (DevKit / SuperMini)
- * 
- * Hardware Configuration:
- *   - 8 Anode Rows: Switched to +5V via IRF9540N P-FETs + BC547 NPN level shifters
- *   - 8 Cathode Cols: Switched to GND via 2N7000 N-FETs + 220 Ohm series resistors
- * 
- * Multiplexing Architecture:
- *   - Row scanning: 100 Hz frame refresh (1250 us per row)
- *   - Dead-time blanking: 15 us to eliminate IRF9540N gate capacitance ghosting
- *   - Sub-cycle PWM: Smooth 0-100% brightness modulation
- * 
- * Supported Commands:
- *   - LED:<1-8>          -> Illuminates selected 1-of-8 position indicator
- *   - LED:<row>,<col>    -> Illuminates individual coordinate in 8x8 grid (0-7)
- *   - BRIGHTNESS:<0-100> -> Adjusts LED intensity in real time
- *   - MESSAGE:<text>     -> Starts non-blocking scrolling text ("HELLO", etc.)
- *   - PATTERN:HEART      -> Displays static aesthetic 8x8 heart
- *   - PATTERN:SMILE      -> Displays smile bitmap
- *   - PATTERN:CLEAR      -> Clears the display
- *   - ANIMATION:PULSE    -> Triggers pulsing heartbeat animation
- * ============================================================================
+/*
+ * AIRTOUCH-88
+ * -----------
+ * 8x8 red LED matrix controller based on ESP32-C3, two 74HC595
+ * shift registers, MOSFET row/column switching, and Wi-Fi UDP.
+ *
+ * Architecture:
+ *   PC / OpenCV -> UDP -> ESP32-C3 -> 74HC595 x2 -> 8x8 LED Matrix
+ *
+ * Hardware:
+ *   GPIO4 -> 74HC595 #1 SER/DS (pin 14)
+ *   GPIO6 -> SHCP/SRCLK (pin 11) on both 74HC595s
+ *   GPIO7 -> STCP/RCLK (pin 12) on both 74HC595s
+ *
+ * Shift-register chain:
+ *   ESP32-C3 -> 74HC595 #1 -> 74HC595 #2
+ *   #1 drives rows    -> 2N7000
+ *   #2 drives columns -> IRF9540N
+ *
+ * Network:
+ *   UDP port: 8888
+ *
+ * Commands:
+ *   FRAME:<64 bits>     Replace the complete 8x8 framebuffer.
+ *   LED:<1-64>          Turn on a numbered LED.
+ *   LED:<row,col>       Turn on a specific pixel (0-7 coordinates).
+ *   TOGGLE:<row,col>    Toggle a specific pixel.
+ *   BRIGHTNESS:<0-100>  Set display brightness.
+ *   ALL_ON              Turn all pixels on.
+ *   CLEAR               Turn all pixels off.
+ *   PATTERN:HEART       Display the heart pattern.
+ *   PATTERN:SMILE       Display the smile pattern.
+ *
+ * FRAME format:
+ *   64 bits, sent row-by-row. Each character is one pixel:
+ *   row 0 = bits  0- 7, row 1 = bits  8-15, ... row 7 = bits 56-63
+ *   0 = OFF, 1 = ON
+ *
  */
 
 #include <WiFi.h>
 #include <WiFiUdp.h>
 
-// ==================== WI-FI SETTINGS ====================
-// Replace with your local Wi-Fi credentials
-const char* WIFI_SSID     = "Your_WiFi_SSID";
-const char* WIFI_PASS     = "Your_WiFi_Password";
-const uint16_t UDP_PORT   = 8888;
 
-// ==================== PIN DEFINITIONS ====================
-// Row Anodes (Driven HIGH via BC547 -> IRF9540N)
-const uint8_t ROW_PINS[8] = {0, 1, 2, 3, 4, 5, 6, 7};
+// -----------------------------------------------------------------------------
+// Wi-Fi configuration
+// -----------------------------------------------------------------------------
 
-// Column Cathodes (Driven HIGH via 2N7000 -> 220 Ohm -> GND)
-const uint8_t COL_PINS[8] = {8, 10, 18, 19, 20, 21, 9, 11};
+const char* WIFI_SSID = "YOUR_WIFI_SSID";
+const char* WIFI_PASS = "YOUR_WIFI_PASSWORD";
 
-// ==================== TIMING CONSTANTS ====================
-// Full frame: 8 rows * 1250 us = 10,000 us = 10 ms = 100 Hz refresh rate
-const uint32_t ROW_DWELL_US = 1250; 
-const uint32_t DEAD_TIME_US = 15;   // Hardware turn-off blanking for ghosting prevention
-
-// ==================== DISPLAY BUFFERS & STATE ====================
-// Active display buffer (frameBuffer[r] bit c = LED at row r, col c)
-volatile uint8_t frameBuffer[8] = {0};
-
-// Brightness: 0 (OFF) to 100 (Full intensity)
-volatile uint8_t currentBrightness = 75;
-
-enum DisplayMode {
-  MODE_STATIC_BITMAP,
-  MODE_SINGLE_POSITION,
-  MODE_SCROLLING_TEXT,
-  MODE_ANIMATION
-};
-volatile DisplayMode currentMode = MODE_STATIC_BITMAP;
-
-// Text Scrolling Engine State
-String scrollText = "HELLO";
-int scrollOffset = -8;
-unsigned long lastScrollTick = 0;
-const uint16_t SCROLL_SPEED_MS = 110;
-
-// Pulse Animation State
-unsigned long lastAnimTick = 0;
-uint8_t animFrame = 0;
-
-// Network
 WiFiUDP udp;
-char udpPacketBuffer[256];
-String serialCommandBuffer = "";
 
-// ==================== 8x8 BITMAP ASSETS ====================
-// Aesthetic Heart (Optimized for 8x8 red matrix)
-const uint8_t BITMAP_HEART_LARGE[8] = {
-  0b00000000,
-  0b01100110,
-  0b11111111,
-  0b11111111,
-  0b01111110,
-  0b00111100,
-  0b00011000,
-  0b00000000
+const uint16_t UDP_PORT = 8888;
+
+bool udpStarted = false;
+
+
+// -----------------------------------------------------------------------------
+// Wi-Fi retry timing
+// -----------------------------------------------------------------------------
+
+unsigned long lastWiFiAttempt = 0;
+
+const unsigned long WIFI_RETRY_INTERVAL = 5000;
+
+
+// -----------------------------------------------------------------------------
+// ESP32-C3 pin assignments
+// -----------------------------------------------------------------------------
+
+const int DATA_PIN  = 4;
+const int CLOCK_PIN = 6;
+const int LATCH_PIN = 7;
+
+
+// -----------------------------------------------------------------------------
+// 8x8 framebuffer
+// -----------------------------------------------------------------------------
+
+// One byte represents one logical row.
+// Bit 0 = column 0, bit 7 = column 7.
+volatile uint8_t frameBuffer[8] = {
+  0,0,0,0,0,0,0,0
 };
 
-// Small Heart for pulsing animation
-const uint8_t BITMAP_HEART_SMALL[8] = {
-  0b00000000,
-  0b00000000,
-  0b00100100,
-  0b01111110,
-  0b00111100,
-  0b00011000,
-  0b00000000,
-  0b00000000
-};
 
-// Smile Face
-const uint8_t BITMAP_SMILE[8] = {
-  0b00111100,
-  0b01000010,
-  0b10100101,
-  0b10000001,
-  0b10100101,
-  0b10011001,
-  0b01000010,
-  0b00111100
-};
+// -----------------------------------------------------------------------------
+// Matrix orientation
+// -----------------------------------------------------------------------------
 
-// ==================== 5x7 ASCII FONT TABLE ====================
-// ASCII 32 (' ') to 90 ('Z')
-const uint8_t FONT_5X7[][5] = {
-  {0x00, 0x00, 0x00, 0x00, 0x00}, // 32 ' '
-  {0x00, 0x00, 0x5F, 0x00, 0x00}, // 33 '!'
-  {0x00, 0x07, 0x00, 0x07, 0x00}, // 34 '"'
-  {0x14, 0x7F, 0x14, 0x7F, 0x14}, // 35 '#'
-  {0x24, 0x2A, 0x7F, 0x2A, 0x12}, // 36 '$'
-  {0x23, 0x13, 0x08, 0x64, 0x62}, // 37 '%'
-  {0x36, 0x49, 0x55, 0x22, 0x50}, // 38 '&'
-  {0x00, 0x05, 0x03, 0x00, 0x00}, // 39 '''
-  {0x00, 0x1C, 0x22, 0x41, 0x00}, // 40 '('
-  {0x00, 0x41, 0x22, 0x1C, 0x00}, // 41 ')'
-  {0x14, 0x08, 0x3E, 0x08, 0x14}, // 42 '*'
-  {0x08, 0x08, 0x3E, 0x08, 0x08}, // 43 '+'
-  {0x00, 0x50, 0x30, 0x00, 0x00}, // 44 ','
-  {0x08, 0x08, 0x08, 0x08, 0x08}, // 45 '-'
-  {0x00, 0x60, 0x60, 0x00, 0x00}, // 46 '.'
-  {0x20, 0x10, 0x08, 0x04, 0x02}, // 47 '/'
-  {0x3E, 0x51, 0x49, 0x45, 0x3E}, // 48 '0'
-  {0x00, 0x42, 0x7F, 0x40, 0x00}, // 49 '1'
-  {0x42, 0x61, 0x51, 0x49, 0x46}, // 50 '2'
-  {0x21, 0x41, 0x45, 0x4B, 0x31}, // 51 '3'
-  {0x18, 0x14, 0x12, 0x7F, 0x10}, // 52 '4'
-  {0x27, 0x45, 0x45, 0x45, 0x39}, // 53 '5'
-  {0x3C, 0x4A, 0x49, 0x49, 0x30}, // 54 '6'
-  {0x01, 0x71, 0x09, 0x05, 0x03}, // 55 '7'
-  {0x36, 0x49, 0x49, 0x49, 0x36}, // 56 '8'
-  {0x06, 0x49, 0x49, 0x29, 0x1E}, // 57 '9'
-  {0x00, 0x36, 0x36, 0x00, 0x00}, // 58 ':'
-  {0x00, 0x56, 0x36, 0x00, 0x00}, // 59 ';'
-  {0x08, 0x14, 0x22, 0x41, 0x00}, // 60 '<'
-  {0x14, 0x14, 0x14, 0x14, 0x14}, // 61 '='
-  {0x00, 0x41, 0x22, 0x14, 0x08}, // 62 '>'
-  {0x02, 0x01, 0x51, 0x09, 0x06}, // 63 '?'
-  {0x32, 0x49, 0x79, 0x41, 0x3E}, // 64 '@'
-  {0x7E, 0x11, 0x11, 0x11, 0x7E}, // 65 'A'
-  {0x7F, 0x49, 0x49, 0x49, 0x36}, // 66 'B'
-  {0x3E, 0x41, 0x41, 0x41, 0x22}, // 67 'C'
-  {0x7F, 0x41, 0x41, 0x22, 0x1C}, // 68 'D'
-  {0x7F, 0x49, 0x49, 0x49, 0x41}, // 69 'E'
-  {0x7F, 0x09, 0x09, 0x09, 0x01}, // 70 'F'
-  {0x3E, 0x41, 0x49, 0x49, 0x7A}, // 71 'G'
-  {0x7F, 0x08, 0x08, 0x08, 0x7F}, // 72 'H'
-  {0x00, 0x41, 0x7F, 0x41, 0x00}, // 73 'I'
-  {0x20, 0x40, 0x41, 0x3F, 0x01}, // 74 'J'
-  {0x7F, 0x08, 0x14, 0x22, 0x41}, // 75 'K'
-  {0x7F, 0x40, 0x40, 0x40, 0x40}, // 76 'L'
-  {0x7F, 0x02, 0x0C, 0x02, 0x7F}, // 77 'M'
-  {0x7F, 0x04, 0x08, 0x10, 0x7F}, // 78 'N'
-  {0x3E, 0x41, 0x41, 0x41, 0x3E}, // 79 'O'
-  {0x7F, 0x09, 0x09, 0x09, 0x06}, // 80 'P'
-  {0x3E, 0x41, 0x51, 0x21, 0x5E}, // 81 'Q'
-  {0x7F, 0x09, 0x19, 0x29, 0x46}, // 82 'R'
-  {0x46, 0x49, 0x49, 0x49, 0x31}, // 83 'S'
-  {0x01, 0x01, 0x7F, 0x01, 0x01}, // 84 'T'
-  {0x3F, 0x40, 0x40, 0x40, 0x3F}, // 85 'U'
-  {0x1F, 0x20, 0x40, 0x20, 0x1F}, // 86 'V'
-  {0x3F, 0x40, 0x38, 0x40, 0x3F}, // 87 'W'
-  {0x63, 0x14, 0x08, 0x14, 0x63}, // 88 'X'
-  {0x07, 0x08, 0x70, 0x08, 0x07}, // 89 'Y'
-  {0x61, 0x51, 0x49, 0x45, 0x43}  // 90 'Z'
-};
+// Set a flag to true if the physical matrix appears mirrored.
+const bool REVERSE_ROWS    = false;
+const bool REVERSE_COLUMNS = false;
 
-// Forward Declarations
-void handleCommand(String cmd);
-void parseIncomingPacket();
-void updateDisplayAnimations();
-void displaySingleRow(uint8_t row);
 
-// ==================== SETUP ====================
-void setup() {
-  Serial.begin(115200);
-  delay(500);
-  Serial.println("\n[SYSTEM] ESP32-C3 8x8 LED Matrix Controller Initializing...");
+// -----------------------------------------------------------------------------
+// Display brightness
+// -----------------------------------------------------------------------------
 
-  // Initialize GPIO outputs
-  for (uint8_t i = 0; i < 8; i++) {
-    pinMode(ROW_PINS[i], OUTPUT);
-    digitalWrite(ROW_PINS[i], LOW); // BC547 OFF -> IRF9540N OFF
-    
-    pinMode(COL_PINS[i], OUTPUT);
-    digitalWrite(COL_PINS[i], LOW); // 2N7000 OFF
+uint8_t brightness = 75;
+
+
+// -----------------------------------------------------------------------------
+// Multiplexing / scan timing
+// -----------------------------------------------------------------------------
+
+uint8_t currentRow = 0;
+
+unsigned long lastScanTime = 0;
+
+const unsigned long ROW_PERIOD_US = 1250;
+const unsigned long DEAD_TIME_US  = 15;
+
+
+// -----------------------------------------------------------------------------
+// 74HC595 low-level interface
+// -----------------------------------------------------------------------------
+
+void shiftByte(uint8_t value)
+{
+
+  for (int i = 7; i >= 0; i--)
+  {
+
+    digitalWrite(CLOCK_PIN, LOW);
+
+    if (value & (1 << i))
+      digitalWrite(DATA_PIN, HIGH);
+    else
+      digitalWrite(DATA_PIN, LOW);
+
+    digitalWrite(CLOCK_PIN, HIGH);
   }
 
-  // Load default pattern (Aesthetic Heart)
-  for (uint8_t r = 0; r < 8; r++) {
-    frameBuffer[r] = BITMAP_HEART_LARGE[r];
-  }
-
-  // Wi-Fi Initialization
-  WiFi.mode(WIFI_STA);
-  WiFi.begin(WIFI_SSID, WIFI_PASS);
-  Serial.print("[NETWORK] Connecting to Wi-Fi: ");
-  Serial.print(WIFI_SSID);
-
-  uint8_t wifiTimeout = 0;
-  while (WiFi.status() != WL_CONNECTED && wifiTimeout < 20) {
-    delay(500);
-    Serial.print(".");
-    wifiTimeout++;
-  }
-
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[NETWORK] Wi-Fi Connected!");
-    Serial.print("[NETWORK] IP Address: ");
-    Serial.println(WiFi.localIP());
-    udp.begin(UDP_PORT);
-    Serial.printf("[NETWORK] UDP Listener active on port %d\n", UDP_PORT);
-  } else {
-    Serial.println("\n[NETWORK] Wi-Fi not connected (Running in USB Serial mode)");
-  }
-
-  Serial.println("[SYSTEM] Ready for commands. Available commands:");
-  Serial.println("  LED:<1-8> | BRIGHTNESS:<0-100> | MESSAGE:<text> | PATTERN:<HEART|SMILE|CLEAR>");
+  digitalWrite(CLOCK_PIN, LOW);
 }
 
-// ==================== MAIN LOOP ====================
-void loop() {
-  // 1. Process network packets (UDP)
-  parseIncomingPacket();
 
-  // 2. Process USB Serial commands
-  while (Serial.available()) {
-    char c = (char)Serial.read();
-    if (c == '\n' || c == '\r') {
-      if (serialCommandBuffer.length() > 0) {
-        handleCommand(serialCommandBuffer);
-        serialCommandBuffer = "";
-      }
-    } else {
-      serialCommandBuffer += c;
-    }
-  }
+// -----------------------------------------------------------------------------
+// Latch shifted data
+// -----------------------------------------------------------------------------
 
-  // 3. Update Text Scrolling / Animations
-  updateDisplayAnimations();
+void latchData()
+{
 
-  // 4. Multiplex all 8 rows sequentially (1 full frame = 10 ms = 100 Hz)
-  for (uint8_t row = 0; row < 8; row++) {
-    displaySingleRow(row);
-  }
+  digitalWrite(LATCH_PIN, HIGH);
+
+  delayMicroseconds(1);
+
+  digitalWrite(LATCH_PIN, LOW);
 }
 
-// ==================== MULTIPLEXING & PWM ENGINE ====================
-void displaySingleRow(uint8_t row) {
-  // STEP 1: Turn OFF previous row to prevent ghosting
-  for (uint8_t r = 0; r < 8; r++) {
-    digitalWrite(ROW_PINS[r], LOW); // BC547 OFF -> IRF9540N gate pulled to +5V -> OFF
+
+// -----------------------------------------------------------------------------
+// Safety: disable all LED paths
+// -----------------------------------------------------------------------------
+
+void allOutputsOff()
+{
+
+  digitalWrite(LATCH_PIN, LOW);
+
+  // 595 #2 = columns.
+  // IRF9540N is active LOW: HIGH = OFF.
+  shiftByte(0xFF);
+
+  // 595 #1 = rows.
+  // 2N7000 gate is active HIGH: LOW = OFF.
+  shiftByte(0x00);
+
+  latchData();
+}
+
+
+// -----------------------------------------------------------------------------
+// Logical-to-physical row mapping
+// -----------------------------------------------------------------------------
+
+uint8_t physicalRow(uint8_t row)
+{
+
+  if (REVERSE_ROWS)
+    return 7 - row;
+
+  return row;
+}
+
+
+// -----------------------------------------------------------------------------
+// Logical-to-physical column mapping
+// -----------------------------------------------------------------------------
+
+uint8_t physicalColumns(uint8_t value)
+{
+
+  if (!REVERSE_COLUMNS)
+    return value;
+
+  uint8_t result = 0;
+
+  for (int i = 0; i < 8; i++)
+  {
+
+    if (value & (1 << i))
+      result |= (1 << (7 - i));
   }
 
-  // STEP 2: Blank all columns
-  for (uint8_t c = 0; c < 8; c++) {
-    digitalWrite(COL_PINS[c], LOW); // 2N7000 OFF
-  }
+  return result;
+}
 
-  // STEP 3: Hardware Dead-Time
-  // Allows IRF9540N gate capacitance (Ciss=1300pF) to fully discharge via 10k pull-up
+
+// -----------------------------------------------------------------------------
+// Multiplex one row
+// -----------------------------------------------------------------------------
+
+void displayRow(uint8_t row)
+{
+
+  // Turn everything OFF first
+  allOutputsOff();
+
   delayMicroseconds(DEAD_TIME_US);
 
-  // If brightness is 0 or no LEDs lit in this row, skip turning on
-  uint8_t rowData = frameBuffer[row];
-  if (currentBrightness == 0 || rowData == 0) {
-    delayMicroseconds(ROW_DWELL_US - DEAD_TIME_US);
+
+  // Brightness zero
+  if (brightness == 0)
+    return;
+
+
+  // Read current row
+  uint8_t columnData;
+
+  noInterrupts();
+
+  columnData = frameBuffer[row];
+
+  interrupts();
+
+
+  // Physical row
+  uint8_t r = physicalRow(row);
+
+  uint8_t rowData = (1 << r);
+
+
+  // Physical columns
+  columnData = physicalColumns(columnData);
+
+
+  // Calculate ON time
+  unsigned long onTime =
+      ((unsigned long)ROW_PERIOD_US * brightness) / 100;
+
+
+  if (onTime <= DEAD_TIME_US)
+    return;
+
+
+  // ----------------------------------------------------------
+  // SEND TO SHIFT REGISTERS
+  // ----------------------------------------------------------
+
+  digitalWrite(LATCH_PIN, LOW);
+
+
+  // FAR 595 (#2) FIRST
+  // Columns active LOW
+  shiftByte(~columnData);
+
+
+  // NEAR 595 (#1) SECOND
+  // Rows active HIGH
+  shiftByte(rowData);
+
+
+  latchData();
+
+
+  // ----------------------------------------------------------
+  // DISPLAY
+  // ----------------------------------------------------------
+
+  delayMicroseconds(onTime - DEAD_TIME_US);
+
+
+  // ----------------------------------------------------------
+  // OFF
+  // ----------------------------------------------------------
+
+  allOutputsOff();
+}
+
+
+// -----------------------------------------------------------------------------
+// Framebuffer operations
+// -----------------------------------------------------------------------------
+
+void clearMatrix()
+{
+
+  noInterrupts();
+
+  for (int i = 0; i < 8; i++)
+    frameBuffer[i] = 0;
+
+  interrupts();
+
+  Serial.println("[MATRIX] CLEAR");
+}
+
+
+// -----------------------------------------------------------------------------
+// Turn every pixel on
+// -----------------------------------------------------------------------------
+
+void allLEDsOn()
+{
+
+  noInterrupts();
+
+  for (int i = 0; i < 8; i++)
+    frameBuffer[i] = 0xFF;
+
+  interrupts();
+
+  Serial.println("[MATRIX] ALL ON");
+}
+
+
+// -----------------------------------------------------------------------------
+// Set one pixel
+// -----------------------------------------------------------------------------
+
+void setLED(int row, int col, bool state)
+{
+
+  if (row < 0 || row > 7)
+    return;
+
+  if (col < 0 || col > 7)
+    return;
+
+
+  noInterrupts();
+
+  if (state)
+    frameBuffer[row] |= (1 << col);
+  else
+    frameBuffer[row] &= ~(1 << col);
+
+  interrupts();
+}
+
+
+// -----------------------------------------------------------------------------
+// Toggle one pixel
+// -----------------------------------------------------------------------------
+
+void toggleLED(int row, int col)
+{
+
+  if (row < 0 || row > 7)
+    return;
+
+  if (col < 0 || col > 7)
+    return;
+
+
+  noInterrupts();
+
+  frameBuffer[row] ^= (1 << col);
+
+  interrupts();
+}
+
+
+// -----------------------------------------------------------------------------
+// Built-in patterns
+// -----------------------------------------------------------------------------
+
+void heartPattern()
+{
+
+  const uint8_t heart[8] =
+  {
+    0b01100110,
+    0b11111111,
+    0b11111111,
+    0b11111111,
+    0b01111110,
+    0b00111100,
+    0b00011000,
+    0b00000000
+  };
+
+
+  noInterrupts();
+
+  for (int i = 0; i < 8; i++)
+    frameBuffer[i] = heart[i];
+
+  interrupts();
+
+
+  Serial.println("[MATRIX] HEART");
+}
+
+
+void smilePattern()
+{
+
+  const uint8_t smile[8] =
+  {
+    0b00111100,
+    0b01000010,
+    0b10100101,
+    0b10000001,
+    0b10100101,
+    0b10011001,
+    0b01000010,
+    0b00111100
+  };
+
+
+  noInterrupts();
+
+  for (int i = 0; i < 8; i++)
+    frameBuffer[i] = smile[i];
+
+  interrupts();
+
+
+  Serial.println("[MATRIX] SMILE");
+}
+
+
+// -----------------------------------------------------------------------------
+// FRAME:<64 bits> parser
+// -----------------------------------------------------------------------------
+
+bool processFrame(String data)
+{
+
+  data.trim();
+
+
+  if (!data.startsWith("FRAME:"))
+    return false;
+
+
+  String bits = data.substring(6);
+
+  bits.trim();
+
+
+  if (bits.length() != 64)
+  {
+
+    Serial.print("[FRAME] ERROR: ");
+    Serial.print(bits.length());
+    Serial.println(" bits received. Need 64.");
+
+    return false;
+  }
+
+
+  uint8_t newFrame[8] =
+  {
+    0,0,0,0,0,0,0,0
+  };
+
+
+  for (int row = 0; row < 8; row++)
+  {
+
+    uint8_t value = 0;
+
+
+    for (int col = 0; col < 8; col++)
+    {
+
+      char c = bits[row * 8 + col];
+
+
+      if (c == '1')
+      {
+        value |= (1 << col);
+      }
+
+      else if (c != '0')
+      {
+
+        Serial.println(
+          "[FRAME] ERROR: Invalid character"
+        );
+
+        return false;
+      }
+    }
+
+
+    newFrame[row] = value;
+  }
+
+
+  noInterrupts();
+
+  for (int i = 0; i < 8; i++)
+    frameBuffer[i] = newFrame[i];
+
+  interrupts();
+
+
+  return true;
+}
+
+
+// -----------------------------------------------------------------------------
+// LED command parser
+// -----------------------------------------------------------------------------
+
+void processLED(String data)
+{
+
+  data.trim();
+
+
+  if (!data.startsWith("LED:"))
+    return;
+
+
+  String value = data.substring(4);
+
+  int comma = value.indexOf(',');
+
+
+  // ----------------------------------------------------------
+  // LED:1 ... LED:64
+  // ----------------------------------------------------------
+
+  if (comma == -1)
+  {
+
+    int led = value.toInt();
+
+
+    if (led >= 1 && led <= 64)
+    {
+
+      int index = led - 1;
+
+      int row = index / 8;
+
+      int col = index % 8;
+
+      setLED(row, col, true);
+
+
+      Serial.print("[LED] ON ");
+      Serial.print(row);
+      Serial.print(",");
+      Serial.println(col);
+    }
+
     return;
   }
 
-  // STEP 4: Set column cathode states for current row
-  for (uint8_t col = 0; col < 8; col++) {
-    if (rowData & (1 << (7 - col))) {
-      digitalWrite(COL_PINS[col], HIGH); // 2N7000 ON -> Cathode pulled to GND
-    } else {
-      digitalWrite(COL_PINS[col], LOW);  // 2N7000 OFF
-    }
+
+  // ----------------------------------------------------------
+  // LED:ROW,COLUMN
+  // ----------------------------------------------------------
+
+  int row =
+      value.substring(0, comma).toInt();
+
+  int col =
+      value.substring(comma + 1).toInt();
+
+
+  setLED(row, col, true);
+}
+
+
+// -----------------------------------------------------------------------------
+// TOGGLE command parser
+// -----------------------------------------------------------------------------
+
+void processToggle(String data)
+{
+
+  data.trim();
+
+
+  if (!data.startsWith("TOGGLE:"))
+    return;
+
+
+  String value = data.substring(7);
+
+  int comma = value.indexOf(',');
+
+
+  if (comma == -1)
+    return;
+
+
+  int row =
+      value.substring(0, comma).toInt();
+
+  int col =
+      value.substring(comma + 1).toInt();
+
+
+  toggleLED(row, col);
+}
+
+
+// -----------------------------------------------------------------------------
+// Display brightness
+// -----------------------------------------------------------------------------
+
+void processBrightness(String data)
+{
+
+  data.trim();
+
+
+  if (!data.startsWith("BRIGHTNESS:"))
+    return;
+
+
+  int value =
+      data.substring(11).toInt();
+
+
+  brightness = constrain(value, 0, 100);
+
+
+  Serial.print("[BRIGHTNESS] ");
+
+  Serial.print(brightness);
+
+  Serial.println("%");
+}
+
+
+// -----------------------------------------------------------------------------
+// PATTERN command parser
+// -----------------------------------------------------------------------------
+
+void processPattern(String data)
+{
+
+  data.trim();
+
+
+  if (!data.startsWith("PATTERN:"))
+    return;
+
+
+  String pattern =
+      data.substring(8);
+
+
+  pattern.toUpperCase();
+
+
+  if (pattern == "HEART")
+  {
+    heartPattern();
   }
 
-  // STEP 5: Turn ON active row anode
-  digitalWrite(ROW_PINS[row], HIGH); // BC547 ON -> IRF9540N gate pulled to GND -> ON (+5V)
-
-  // STEP 6: Sub-cycle Software PWM for Intensity Control
-  uint32_t activeDwellUs = (ROW_DWELL_US * currentBrightness) / 100;
-  if (activeDwellUs > DEAD_TIME_US) {
-    delayMicroseconds(activeDwellUs - DEAD_TIME_US);
+  else if (pattern == "SMILE")
+  {
+    smilePattern();
   }
 
-  // Blank row early if brightness < 100%
-  if (currentBrightness < 100) {
-    digitalWrite(ROW_PINS[row], LOW);
-    uint32_t remainingDwellUs = ROW_DWELL_US - activeDwellUs;
-    if (remainingDwellUs > 0) {
-      delayMicroseconds(remainingDwellUs);
-    }
+  else if (pattern == "CLEAR")
+  {
+    clearMatrix();
   }
 }
 
-// ==================== ANIMATION & SCROLLING ENGINE ====================
-void updateDisplayAnimations() {
+
+// -----------------------------------------------------------------------------
+// Command dispatcher
+// -----------------------------------------------------------------------------
+
+void processCommand(String command)
+{
+
+  command.trim();
+
+
+  if (command.length() == 0)
+    return;
+
+
+  Serial.print("[CMD] ");
+
+  Serial.println(command);
+
+
+  if (command.startsWith("FRAME:"))
+  {
+    processFrame(command);
+    return;
+  }
+
+
+  if (command.startsWith("LED:"))
+  {
+    processLED(command);
+    return;
+  }
+
+
+  if (command.startsWith("TOGGLE:"))
+  {
+    processToggle(command);
+    return;
+  }
+
+
+  if (command.startsWith("BRIGHTNESS:"))
+  {
+    processBrightness(command);
+    return;
+  }
+
+
+  if (command.startsWith("PATTERN:"))
+  {
+    processPattern(command);
+    return;
+  }
+
+
+  if (command == "ALL_ON")
+  {
+    allLEDsOn();
+    return;
+  }
+
+
+  if (command == "CLEAR")
+  {
+    clearMatrix();
+    return;
+  }
+
+
+  Serial.println("[CMD] Unknown command");
+}
+
+
+// -----------------------------------------------------------------------------
+// Wi-Fi connection
+// -----------------------------------------------------------------------------
+//
+// IMPORTANT:
+// We DO NOT repeatedly call WiFi.begin() while connecting.
+//
+// ============================================================
+
+void connectToWiFi()
+{
+
+  Serial.println();
+
+  Serial.println(
+    "[NETWORK] Starting Wi-Fi connection..."
+  );
+
+
+  // Completely stop previous connection
+  WiFi.disconnect(true);
+
+  delay(300);
+
+
+  // Station mode
+  WiFi.mode(WIFI_STA);
+
+  delay(100);
+
+
+  Serial.print(
+    "[NETWORK] SSID: "
+  );
+
+  Serial.println(WIFI_SSID);
+
+
+  Serial.println(
+    "[NETWORK] Calling WiFi.begin()..."
+  );
+
+
+  WiFi.begin(
+    WIFI_SSID,
+    WIFI_PASS
+  );
+
+
+  // ----------------------------------------------------------
+  // WAIT FOR CONNECTION
+  // ----------------------------------------------------------
+
+  unsigned long startTime = millis();
+
+
+  while (
+    WiFi.status() != WL_CONNECTED &&
+    millis() - startTime < 20000
+  )
+  {
+
+    delay(500);
+
+    Serial.print(".");
+  }
+
+
+  Serial.println();
+
+
+  // ----------------------------------------------------------
+  // SUCCESS
+  // ----------------------------------------------------------
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+
+    Serial.println();
+
+    Serial.println(
+      "================================"
+    );
+
+    Serial.println(
+      "       WIFI CONNECTED"
+    );
+
+    Serial.println(
+      "================================"
+    );
+
+
+    Serial.print("SSID: ");
+
+    Serial.println(
+      WiFi.SSID()
+    );
+
+
+    Serial.print("IP: ");
+
+    Serial.println(
+      WiFi.localIP()
+    );
+
+
+    Serial.print("RSSI: ");
+
+    Serial.print(
+      WiFi.RSSI()
+    );
+
+    Serial.println(" dBm");
+
+
+    Serial.print("UDP PORT: ");
+
+    Serial.println(
+      UDP_PORT
+    );
+
+
+    Serial.println(
+      "================================"
+    );
+
+    Serial.println();
+
+
+    // Start UDP ONLY after Wi-Fi succeeds
+    udp.begin(UDP_PORT);
+
+    udpStarted = true;
+
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // FAILURE
+  // ----------------------------------------------------------
+
+  udpStarted = false;
+
+
+  Serial.println();
+
+  Serial.println(
+    "[NETWORK] Wi-Fi connection FAILED."
+  );
+
+
+  Serial.print(
+    "[NETWORK] Status = "
+  );
+
+  Serial.println(
+    WiFi.status()
+  );
+
+
+  if (WiFi.status() == WL_CONNECT_FAILED)
+  {
+
+    Serial.println(
+      "[NETWORK] WL_CONNECT_FAILED"
+    );
+
+    Serial.println(
+      "[NETWORK] Check SSID/password and hotspot."
+    );
+  }
+
+
+  Serial.println(
+    "[NETWORK] Will retry."
+  );
+}
+
+
+// -----------------------------------------------------------------------------
+// Wi-Fi state check / reconnect
+// -----------------------------------------------------------------------------
+
+void checkWiFi()
+{
+
+  if (WiFi.status() == WL_CONNECTED)
+  {
+
+    if (!udpStarted)
+    {
+
+      udp.begin(UDP_PORT);
+
+      udpStarted = true;
+
+
+      Serial.println(
+        "[NETWORK] UDP restarted."
+      );
+    }
+
+
+    return;
+  }
+
+
+  // ----------------------------------------------------------
+  // DISCONNECTED
+  // ----------------------------------------------------------
+
+  udpStarted = false;
+
+
   unsigned long now = millis();
 
-  // Scrolling Text Engine
-  if (currentMode == MODE_SCROLLING_TEXT) {
-    if (now - lastScrollTick >= SCROLL_SPEED_MS) {
-      lastScrollTick = now;
 
-      // Calculate total text width in pixel columns
-      // Each character is 5 columns wide + 1 space column = 6 columns
-      int totalColumns = scrollText.length() * 6;
+  if (
+    now - lastWiFiAttempt >=
+    WIFI_RETRY_INTERVAL
+  )
+  {
 
-      // Clear frame buffer
-      for (uint8_t r = 0; r < 8; r++) {
-        frameBuffer[r] = 0;
-      }
+    lastWiFiAttempt = now;
 
-      // Render visible 8 columns starting at scrollOffset
-      for (uint8_t screenCol = 0; screenCol < 8; screenCol++) {
-        int textCol = scrollOffset + screenCol;
-        if (textCol >= 0 && textCol < totalColumns) {
-          int charIndex = textCol / 6;
-          int charCol = textCol % 6;
-
-          if (charCol < 5) { // 5 pixel columns of the character
-            char c = scrollText.charAt(charIndex);
-            // Convert lowercase to uppercase for 5x7 font
-            if (c >= 'a' && c <= 'z') c = c - 'a' + 'A';
-            if (c >= 32 && c <= 90) {
-              uint8_t fontColBits = FONT_5X7[c - 32][charCol];
-              // Map 7 bits into rows 0..6
-              for (uint8_t r = 0; r < 7; r++) {
-                if (fontColBits & (1 << r)) {
-                  frameBuffer[r] |= (1 << (7 - screenCol));
-                }
-              }
-            }
-          }
-        }
-      }
-
-      scrollOffset++;
-      if (scrollOffset > totalColumns) {
-        scrollOffset = -8; // Loop back from right edge
-      }
-    }
-  }
-
-  // Pulsing Heart Animation
-  else if (currentMode == MODE_ANIMATION) {
-    if (now - lastAnimTick >= 400) {
-      lastAnimTick = now;
-      animFrame = !animFrame;
-      const uint8_t* pattern = animFrame ? BITMAP_HEART_LARGE : BITMAP_HEART_SMALL;
-      for (uint8_t r = 0; r < 8; r++) {
-        frameBuffer[r] = pattern[r];
-      }
-    }
+    connectToWiFi();
   }
 }
 
-// ==================== NETWORK & COMMAND PARSING ====================
-void parseIncomingPacket() {
-  int packetSize = udp.parsePacket();
-  if (packetSize) {
-    int len = udp.read(udpPacketBuffer, sizeof(udpPacketBuffer) - 1);
-    if (len > 0) {
-      udpPacketBuffer[len] = '\0';
-      String cmd = String(udpPacketBuffer);
-      cmd.trim();
-      handleCommand(cmd);
-    }
+
+// -----------------------------------------------------------------------------
+// UDP receiver
+// -----------------------------------------------------------------------------
+
+void checkUDP()
+{
+
+  if (!udpStarted)
+    return;
+
+
+  int packetSize =
+      udp.parsePacket();
+
+
+  if (packetSize <= 0)
+    return;
+
+
+  String command = "";
+
+
+  while (udp.available())
+  {
+
+    command +=
+      (char)udp.read();
   }
+
+
+  processCommand(command);
 }
 
-void handleCommand(String cmd) {
-  cmd.trim();
-  if (cmd.length() == 0) return;
 
-  Serial.print("[COMMAND RECEIVED] ");
-  Serial.println(cmd);
+// -----------------------------------------------------------------------------
+// Serial command receiver
+// -----------------------------------------------------------------------------
 
-  // 1. LED Selection Command: "LED:<pos>" or "LED:<r>,<c>"
-  if (cmd.startsWith("LED:")) {
-    String param = cmd.substring(4);
-    param.trim();
+void checkSerial()
+{
 
-    int commaIndex = param.indexOf(',');
-    if (commaIndex > 0) {
-      // Coordinate format: LED:row,col (0-7)
-      int r = param.substring(0, commaIndex).toInt();
-      int c = param.substring(commaIndex + 1).toInt();
-      if (r >= 0 && r < 8 && c >= 0 && c < 8) {
-        currentMode = MODE_SINGLE_POSITION;
-        for (uint8_t i = 0; i < 8; i++) frameBuffer[i] = 0;
-        frameBuffer[r] = (1 << (7 - c));
-        Serial.printf("[ACTION] LED set at (%d, %d)\n", r, c);
-      }
-    } else {
-      // 1-of-8 Selection: LED:1 through LED:8
-      int pos = param.toInt();
-      if (pos >= 1 && pos <= 8) {
-        currentMode = MODE_SINGLE_POSITION;
-        for (uint8_t i = 0; i < 8; i++) frameBuffer[i] = 0;
-        // Turn ON indicator on Row 3 (center) at column (pos - 1)
-        uint8_t col = pos - 1;
-        frameBuffer[3] = (1 << (7 - col));
-        Serial.printf("[ACTION] Selected Position %d illuminated\n", pos);
-    }
-  }
+  if (!Serial.available())
+    return;
 
-  // 1b. Toggle LED Command: "TOGGLE:<r>,<c>"
-  else if (cmd.startsWith("TOGGLE:")) {
-    String param = cmd.substring(7);
-    param.trim();
-    int commaIndex = param.indexOf(',');
-    if (commaIndex > 0) {
-      int r = param.substring(0, commaIndex).toInt();
-      int c = param.substring(commaIndex + 1).toInt();
-      if (r >= 0 && r < 8 && c >= 0 && c < 8) {
-        currentMode = MODE_STATIC_BITMAP;
-        frameBuffer[r] ^= (1 << (7 - c)); // Toggle specific LED
-        Serial.printf("[ACTION] LED toggled at (%d, %d) -> state: %s\n", 
-                      r, c, (frameBuffer[r] & (1 << (7 - c))) ? "ON" : "OFF");
-      }
-    }
-  }
 
-  // 2. Brightness Command: "BRIGHTNESS:<0-100>"
-  else if (cmd.startsWith("BRIGHTNESS:")) {
-    int val = cmd.substring(11).toInt();
-    if (val < 0) val = 0;
-    if (val > 100) val = 100;
-    currentBrightness = (uint8_t)val;
-    Serial.printf("[ACTION] Brightness set to %d%%\n", currentBrightness);
-  }
+  String command =
+      Serial.readStringUntil('\n');
 
-  // 3. Scrolling Message Command: "MESSAGE:<text>"
-  else if (cmd.startsWith("MESSAGE:")) {
-    String msg = cmd.substring(8);
-    msg.trim();
-    if (msg.length() > 0) {
-      scrollText = msg;
-      scrollOffset = -8;
-      currentMode = MODE_SCROLLING_TEXT;
-      Serial.printf("[ACTION] Scrolling message set: \"%s\"\n", scrollText.c_str());
-    }
-  }
 
-  // 4. Predefined Pattern Command: "PATTERN:<name>"
-  else if (cmd.startsWith("PATTERN:")) {
-    String pat = cmd.substring(8);
-    pat.toUpperCase();
-    pat.trim();
+  processCommand(command);
+}
 
-    currentMode = MODE_STATIC_BITMAP;
-    if (pat == "HEART") {
-      for (uint8_t r = 0; r < 8; r++) frameBuffer[r] = BITMAP_HEART_LARGE[r];
-      Serial.println("[ACTION] Pattern set: HEART");
-    } else if (pat == "SMILE") {
-      for (uint8_t r = 0; r < 8; r++) frameBuffer[r] = BITMAP_SMILE[r];
-      Serial.println("[ACTION] Pattern set: SMILE");
-    } else if (pat == "CLEAR") {
-      for (uint8_t r = 0; r < 8; r++) frameBuffer[r] = 0;
-      Serial.println("[ACTION] Pattern set: CLEAR");
-    }
-  }
 
-  // 5. Animation Command: "ANIMATION:<name>"
-  else if (cmd.startsWith("ANIMATION:")) {
-    String anim = cmd.substring(10);
-    anim.toUpperCase();
-    anim.trim();
+// -----------------------------------------------------------------------------
+// Matrix scan scheduler
+// -----------------------------------------------------------------------------
 
-    if (anim == "PULSE" || anim == "HEART") {
-      currentMode = MODE_ANIMATION;
-      Serial.println("[ACTION] Animation set: PULSE HEART");
-    }
-  }
+void scanMatrix()
+{
+
+  unsigned long now = micros();
+
+
+  if (
+    now - lastScanTime <
+    ROW_PERIOD_US
+  )
+    return;
+
+
+  lastScanTime = now;
+
+
+  displayRow(currentRow);
+
+
+  currentRow++;
+
+
+  if (currentRow >= 8)
+    currentRow = 0;
+}
+
+
+// -----------------------------------------------------------------------------
+// Arduino setup
+// -----------------------------------------------------------------------------
+
+void setup()
+{
+
+  Serial.begin(115200);
+
+
+  delay(1000);
+
+
+  Serial.println();
+
+  Serial.println(
+    "======================================"
+  );
+
+  Serial.println(
+    "       AIRTOUCH-88 CONTROLLER"
+  );
+
+  Serial.println(
+    "======================================"
+  );
+
+
+  // ----------------------------------------------------------
+  // GPIO
+  // ----------------------------------------------------------
+
+  pinMode(
+    DATA_PIN,
+    OUTPUT
+  );
+
+  pinMode(
+    CLOCK_PIN,
+    OUTPUT
+  );
+
+  pinMode(
+    LATCH_PIN,
+    OUTPUT
+  );
+
+
+  digitalWrite(
+    DATA_PIN,
+    LOW
+  );
+
+  digitalWrite(
+    CLOCK_PIN,
+    LOW
+  );
+
+  digitalWrite(
+    LATCH_PIN,
+    LOW
+  );
+
+
+  // ----------------------------------------------------------
+  // MATRIX OFF
+  // ----------------------------------------------------------
+
+  allOutputsOff();
+
+
+  Serial.println(
+    "[SYSTEM] Matrix initialized."
+  );
+
+
+  // ----------------------------------------------------------
+  // WIFI
+  // ----------------------------------------------------------
+
+  connectToWiFi();
+
+
+  // ----------------------------------------------------------
+  // COMMANDS
+  // ----------------------------------------------------------
+
+  Serial.println();
+
+  Serial.println(
+    "[SYSTEM] Commands:"
+  );
+
+  Serial.println(
+    "FRAME:<64 bits>"
+  );
+
+  Serial.println(
+    "LED:<1-64>"
+  );
+
+  Serial.println(
+    "LED:<row,col>"
+  );
+
+  Serial.println(
+    "TOGGLE:<row,col>"
+  );
+
+  Serial.println(
+    "BRIGHTNESS:<0-100>"
+  );
+
+  Serial.println(
+    "PATTERN:HEART"
+  );
+
+  Serial.println(
+    "PATTERN:SMILE"
+  );
+
+  Serial.println(
+    "ALL_ON"
+  );
+
+  Serial.println(
+    "CLEAR"
+  );
+
+  Serial.println();
+}
+
+
+// -----------------------------------------------------------------------------
+// Arduino main loop
+// -----------------------------------------------------------------------------
+
+void loop()
+{
+
+  // Matrix
+  scanMatrix();
+
+
+  // Wi-Fi
+  checkWiFi();
+
+
+  // UDP
+  checkUDP();
+
+
+  // Serial
+  checkSerial();
+
+
+  delay(1);
 }
