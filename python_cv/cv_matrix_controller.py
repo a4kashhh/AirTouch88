@@ -5,7 +5,8 @@ Project: Minimal 8x8 LED Matrix Controller & Hand Gesture Interface
 Script:  cv_matrix_controller.py
 
 Layout:
-  - Left Side:  HD Camera View with Fixed 8x8 Control Box + Hand Brightness Zone
+  - Left Side:  Natural Aspect-Ratio Camera View (No Squeeze) with
+                Fixed 8x8 Control Box + Hand Brightness Zone
   - Right Side: Minimalist 8x8 LED Matrix Display with Brightness & Action Buttons
 ================================================================================
 """
@@ -114,7 +115,29 @@ class MatrixCommunicator:
 
 
 # ==============================================================================
-# 2. ANTI-JITTER & POINTER SMOOTHER
+# 2. ASPECT-RATIO PRESERVING FRAME RESIZER (ELIMINATES SQUEEZING)
+# ==============================================================================
+def fit_frame_cover(frame, target_w, target_h):
+    """
+    Scales and center-crops the camera frame to fit (target_w, target_h)
+    preserving 100% true 1:1 aspect ratio with ZERO distortion or squeezing.
+    Returns: cropped_frame, scale, start_x, start_y
+    """
+    h, w = frame.shape[:2]
+    scale = max(target_w / float(w), target_h / float(h))
+    new_w = int(w * scale)
+    new_h = int(h * scale)
+    resized = cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+
+    start_x = (new_w - target_w) // 2
+    start_y = (new_h - target_h) // 2
+    cropped = resized[start_y:start_y + target_h, start_x:start_x + target_w]
+
+    return cropped, scale, start_x, start_y
+
+
+# ==============================================================================
+# 3. ANTI-JITTER & POINTER SMOOTHER
 # ==============================================================================
 class AntiJitterFilter:
     """Provides EMA continuous filtering for analog brightness."""
@@ -151,7 +174,7 @@ class PointerSmoother:
 
 
 # ==============================================================================
-# 3. HIGH-ACCURACY HAND GESTURE & LANDMARK ANALYZER
+# 4. HIGH-ACCURACY HAND GESTURE & LANDMARK ANALYZER
 # ==============================================================================
 HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),
@@ -178,7 +201,7 @@ class HandGestureAnalyzer:
                 model_asset_path=MODEL_PATH,
                 delegate=python.BaseOptions.Delegate.CPU
             )
-            # High sensitivity thresholds for reliable detection in any lighting
+            # High sensitivity thresholds for reliable detection
             options = vision.HandLandmarkerOptions(
                 base_options=base_options,
                 num_hands=1,
@@ -212,7 +235,7 @@ class HandGestureAnalyzer:
         if result.hand_landmarks and len(result.hand_landmarks) > 0:
             hand_detected = True
             lm_list = result.hand_landmarks[0]
-            # Precise isotropic pixel coordinates
+            # True isotropic pixel coordinates
             pts = [(int(lm.x * w), int(lm.y * h)) for lm in lm_list]
 
             wrist = pts[0]
@@ -224,7 +247,7 @@ class HandGestureAnalyzer:
 
             tip_raw_px = index_tip
 
-            # Hand scale based on palm size (wrist to middle knuckle)
+            # Palm size scale
             hand_scale = max(self.dist(wrist, pts[9]), 25.0)
 
             # Pinch detection in true pixel space
@@ -266,15 +289,15 @@ class HandGestureAnalyzer:
 
 
 # ==============================================================================
-# 4. UI GEOMETRY & CONSTANTS
+# 5. UI GEOMETRY & CONSTANTS
 # ==============================================================================
 WINDOW_W = 1260
 WINDOW_H = 720
 
-# LEFT SIDE: Camera Viewport
+# LEFT SIDE: Camera Viewport (Widescreen 600x475)
 CAM_X = 35
 CAM_Y = 80
-CAM_W = 590
+CAM_W = 600
 CAM_H = 475
 
 # Fixed 8x8 Control Box (Air-Pad) on Camera
@@ -301,7 +324,7 @@ AREA_BUTTONS = {
 }
 
 # RIGHT SIDE: 8x8 LED Matrix Display
-MATRIX_ORIGIN_X = 730
+MATRIX_ORIGIN_X = 740
 MATRIX_ORIGIN_Y = 135
 DOT_SPACING = 54
 DOT_RADIUS = 18
@@ -310,7 +333,7 @@ DOT_RADIUS = 18
 grid_dots = np.zeros((8, 8), dtype=np.uint8)
 
 # Minimal Brightness Slider (on right side)
-SLIDER_X = 730
+SLIDER_X = 740
 SLIDER_Y = 575
 SLIDER_W = 378
 SLIDER_H = 6
@@ -347,7 +370,7 @@ drag_offset = (0, 0)
 
 
 # ==============================================================================
-# 5. COORDINATE MAPPING & HIT TESTING
+# 6. COORDINATE MAPPING & HIT TESTING
 # ==============================================================================
 def is_inside_rect(px, py, rect):
     rx, ry, rw, rh = rect
@@ -389,7 +412,7 @@ def get_bright_zone_rect():
 
 
 # ==============================================================================
-# 6. MOUSE EVENT HANDLER
+# 7. MOUSE EVENT HANDLER
 # ==============================================================================
 def on_mouse_event(event, x, y, flags, param):
     """Handles mouse click & drag for dots, slider, buttons, and area control."""
@@ -425,7 +448,8 @@ def on_mouse_event(event, x, y, flags, param):
             control_area['w'] = next_size
             control_area['h'] = next_size
             # Clamp inside camera viewport leaving room for brightness bar
-            control_area['x'] = max(CAM_X + 2, min(CAM_X + CAM_W - next_size - BRIGHT_ZONE_W - BRIGHT_ZONE_GAP - 5, control_area['x']))
+            max_x = CAM_X + CAM_W - next_size - BRIGHT_ZONE_W - BRIGHT_ZONE_GAP - 5
+            control_area['x'] = max(CAM_X + 2, min(max_x, control_area['x']))
             control_area['y'] = max(CAM_Y + 2, min(CAM_Y + CAM_H - next_size - 2, control_area['y']))
             print(f"[AREA] Size: {next_size}x{next_size}", flush=True)
             return
@@ -533,9 +557,9 @@ def on_mouse_event(event, x, y, flags, param):
 
 
 # ==============================================================================
-# 7. RENDERING ENGINE
+# 8. RENDERING ENGINE
 # ==============================================================================
-def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, port, gesture, brightness_active):
+def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, port, gesture, brightness_active):
     """Draws the clean widescreen UI: Camera View on Left, 8x8 Matrix on Right."""
     global click_ripple_anim
 
@@ -554,9 +578,8 @@ def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, por
     # Subtle divider line
     cv2.line(canvas, (CAM_X, 60), (WINDOW_W - CAM_X, 60), (36, 36, 40), 1)
 
-    # 2. LEFT PANEL: Camera Feed Viewport
-    cam_resized = cv2.resize(frame_cam, (CAM_W, CAM_H))
-    canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_resized
+    # 2. LEFT PANEL: Camera Feed Viewport (100% natural, un-squeezed)
+    canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_cropped
     cv2.rectangle(canvas, (CAM_X, CAM_Y), (CAM_X + CAM_W, CAM_Y + CAM_H), (45, 45, 52), 1)
 
     # --- Fixed 8x8 Control Box (Air-Pad) ---
@@ -772,13 +795,13 @@ def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, por
     # 6. Bottom Footer
     cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
     target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
-    footer_text = f"Air-Pad Active  |  Hand Brightness Bar Active  |  Hold Delay: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
+    footer_text = f"Natural Aspect Ratio Camera  |  Hold Delay: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.36, (115, 115, 122), 1, cv2.LINE_AA)
 
 
 # ==============================================================================
-# 8. MAIN LOOP
+# 9. MAIN LOOP
 # ==============================================================================
 def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state
@@ -799,12 +822,12 @@ def main():
     FRAME_INTERVAL = 1.0 / TARGET_FPS
     DWELL_TRIGGER_TIME = float(args.dwell)
 
-    print("\n" + "=" * 58, flush=True)
-    print("  8x8 LED MATRIX CONTROLLER (HIGH ACCURACY + HAND BRIGHTNESS)", flush=True)
+    print("\n" + "=" * 60, flush=True)
+    print("  8x8 LED MATRIX CONTROLLER (ASPECT-CORRECT CAMERA VIEW)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
     print(f"  Hold Delay:         {DWELL_TRIGGER_TIME:.2f}s (single-fire anti-bounce)", flush=True)
-    print("  Hand Brightness:    Move hand into vertical bar on camera", flush=True)
-    print("=" * 58 + "\n", flush=True)
+    print("  Camera View:        Aspect-ratio preserved (no horizontal squeeze)", flush=True)
+    print("=" * 60 + "\n", flush=True)
 
     comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial)
     analyzer = HandGestureAnalyzer()
@@ -820,7 +843,7 @@ def main():
             print(f"[NOTE] Camera {args.camera} unavailable. Running in simulation mode.", flush=True)
             use_simulation = True
 
-    # High-Definition 1280x720 capture for maximum MediaPipe tracking accuracy
+    # High-Definition 1280x720 capture for maximum tracking accuracy
     if not use_simulation:
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
@@ -846,20 +869,20 @@ def main():
                 frame_cam = cv2.flip(frame_raw, 1)
                 detected, gesture, tip_raw, is_pinching = analyzer.analyze(frame_cam)
 
-                # Smooth and map fingertip from HD camera frame to canvas coordinates
+                # Aspect-ratio preserving cover crop (eliminates squeezing completely)
+                cam_cropped, cam_scale, crop_start_x, crop_start_y = fit_frame_cover(frame_cam, CAM_W, CAM_H)
+
+                # Map fingertip from raw camera frame to canvas with exact aspect ratio
                 tip_canvas = None
                 if tip_raw is not None:
-                    raw_h, raw_w = frame_cam.shape[:2]
-                    scale_x = CAM_W / float(raw_w)
-                    scale_y = CAM_H / float(raw_h)
-                    raw_mapped_x = int(CAM_X + tip_raw[0] * scale_x)
-                    raw_mapped_y = int(CAM_Y + tip_raw[1] * scale_y)
+                    raw_mapped_x = int(CAM_X + tip_raw[0] * cam_scale - crop_start_x)
+                    raw_mapped_y = int(CAM_Y + tip_raw[1] * cam_scale - crop_start_y)
                     tip_canvas = smoother.update(raw_mapped_x, raw_mapped_y)
                 else:
                     smoother.reset()
             else:
                 # Simulation mode
-                frame_cam = np.full((CAM_H, CAM_W, 3), 25, dtype=np.uint8)
+                cam_cropped = np.full((CAM_H, CAM_W, 3), 25, dtype=np.uint8)
                 sim_angle += 0.03
                 bx = control_area['x']
                 by = control_area['y']
@@ -966,8 +989,8 @@ def main():
                     comm.send_command("PATTERN:HEART")
                     last_gesture_cmd_time = now
 
-            # 5. Render Minimal UI (Camera Left, Matrix Right)
-            render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress,
+            # 5. Render Minimal UI (Aspect-Correct Camera Left, Matrix Right)
+            render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress,
                       comm.udp_ip, comm.udp_port, gesture, brightness_active)
 
             # 6. Display Window
