@@ -109,7 +109,7 @@ uint8_t currentRow = 0;
 
 unsigned long lastScanTime = 0;
 
-const unsigned long ROW_PERIOD_US = 1250;
+unsigned long ROW_PERIOD_US = 2500; // 50 Hz default (8 rows * 2500us = 20ms full frame)
 const unsigned long DEAD_TIME_US  = 15;
 
 
@@ -750,6 +750,20 @@ void processCommand(String command)
     return;
   }
 
+  if (command.startsWith("FPS:"))
+  {
+    int targetFps = command.substring(4).toInt();
+    if (targetFps >= 10 && targetFps <= 200) {
+      ROW_PERIOD_US = 1000000UL / ((unsigned long)targetFps * 8);
+      Serial.print("[FPS] Refresh set to ");
+      Serial.print(targetFps);
+      Serial.print(" Hz (row period: ");
+      Serial.print(ROW_PERIOD_US);
+      Serial.println(" us)");
+    }
+    return;
+  }
+
 
   Serial.println("[CMD] Unknown command");
 }
@@ -1227,5 +1241,6 @@ void loop()
   checkSerial();
 
 
-  delay(1);
+  // Yield to FreeRTOS watchdog & network stack without delay stalls
+  yield();
 }

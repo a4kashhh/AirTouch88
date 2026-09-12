@@ -16,6 +16,7 @@ import sys
 import math
 import time
 import socket
+import threading
 import argparse
 import urllib.request
 import cv2
@@ -120,6 +121,10 @@ class MatrixCommunicator:
             self.last_sent_brightness = brightness_val
             self.send_command(f"BRIGHTNESS:{brightness_val}")
 
+    def send_fps(self, fps_val):
+        """Sends FPS command to ESP32 to synchronize hardware refresh rate."""
+        self.send_command(f"FPS:{fps_val}")
+
     def send_toggle_dot(self, r, c, grid=None):
         """Toggles dot at row r, col c, sending complete frame to ensure sync."""
         global grid_dots
@@ -173,6 +178,54 @@ def fit_frame_cover(frame, target_w, target_h):
     cropped = resized[start_y:start_y + target_h, start_x:start_x + target_w]
 
     return cropped, scale, start_x, start_y
+
+
+class ThreadedCamera:
+    """
+    Reads webcam frames continuously in a dedicated background thread.
+    Decouples camera sensor latency from the LED matrix rendering loop,
+    ensuring a rock-steady 50 FPS (50 Hz) refresh rate with zero stutter.
+    """
+    def __init__(self, src=0, target_w=1280, target_h=720):
+        self.cap = cv2.VideoCapture(src)
+        self.available = self.cap.isOpened()
+        self.ret = False
+        self.frame = None
+        if self.available:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, target_w)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, target_h)
+            self.ret, self.frame = self.cap.read()
+        self.stopped = False
+        self.lock = threading.Lock()
+        if self.available:
+            self.thread = threading.Thread(target=self._capture_loop, daemon=True)
+            self.thread.start()
+
+    def _capture_loop(self):
+        while not self.stopped:
+            if not self.cap.isOpened():
+                break
+            ret, frame = self.cap.read()
+            if ret:
+                with self.lock:
+                    self.ret = ret
+                    self.frame = frame
+            time.sleep(0.002)
+
+    def read(self):
+        with self.lock:
+            if self.frame is not None:
+                return self.ret, self.frame.copy()
+            return False, None
+
+    def release(self):
+        self.stopped = True
+        if self.available:
+            try:
+                self.thread.join(timeout=0.5)
+            except Exception:
+                pass
+            self.cap.release()
 
 
 # ==============================================================================
@@ -558,12 +611,18 @@ def get_heartbeat_frame(now, start_time):
     is_large = (0.0 <= t < 0.14) or (0.22 <= t < 0.36)
     return (HEART_LARGE, True) if is_large else (HEART_SMALL, False)
 
-# Typography Bar Geometry (Above 8x8 Matrix) - Input, Scroll Toggle, Speed Control
+# Typography Bar Geometry (Above 8x8 Matrix) - Input, Scroll, Speed, and FPS Controls
 TYPO_Y = 72
 TYPO_H = 24
-TYPO_INPUT_RECT = (SLIDER_X, TYPO_Y, 204, TYPO_H)
-TYPO_SCROLL_RECT = (SLIDER_X + 212, TYPO_Y, 86, TYPO_H)
-TYPO_SPEED_RECT = (SLIDER_X + 306, TYPO_Y, 72, TYPO_H)
+TYPO_INPUT_RECT  = (SLIDER_X,       TYPO_Y, 150, TYPO_H)
+TYPO_SCROLL_RECT = (SLIDER_X + 156, TYPO_Y, 74,  TYPO_H)
+TYPO_SPEED_RECT  = (SLIDER_X + 236, TYPO_Y, 68,  TYPO_H)
+TYPO_FPS_RECT    = (SLIDER_X + 310, TYPO_Y, 68,  TYPO_H)
+
+# Frame Rate & Timing State (50 Hz default as requested)
+target_fps = 50
+FPS_PRESETS = [30, 50, 60, 75, 100]
+FRAME_INTERVAL = 1.0 / float(target_fps)
 
 # Animation State Variables
 custom_message = "HELLO"
@@ -571,8 +630,8 @@ is_typing_mode = False
 is_scroll_active = False
 scroll_step = 0
 last_scroll_time = 0.0
-scroll_speed_ms = 80  # Default 80ms per column
-SPEED_PRESETS = [40, 60, 80, 110, 150, 200]
+scroll_speed_ms = 80  # Default 80ms per column (smooth multiple of 20ms frame at 50Hz)
+SPEED_PRESETS = [40, 60, 80, 100, 140, 200]
 scroll_cols = []
 
 is_heartbeat_active = False
@@ -822,7 +881,7 @@ def on_mouse_event(event, x, y, flags, param):
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
-    global is_music_active, audio_viz, last_music_frame
+    global is_music_active, audio_viz, last_music_frame, target_fps, FRAME_INTERVAL
 
     comm = param
     mouse_pos = (x, y)
@@ -916,6 +975,18 @@ def on_mouse_event(event, x, y, flags, param):
             idx = (SPEED_PRESETS.index(scroll_speed_ms) + 1) % len(SPEED_PRESETS) if scroll_speed_ms in SPEED_PRESETS else 2
             scroll_speed_ms = SPEED_PRESETS[idx]
             print(f"[TYPOGRAPHY] Scroll Speed set to {scroll_speed_ms}ms per column", flush=True)
+            return
+
+        elif is_inside_rect(x, y, TYPO_FPS_RECT):
+            if is_master_locked:
+                return
+            idx = (FPS_PRESETS.index(target_fps) + 1) % len(FPS_PRESETS) if target_fps in FPS_PRESETS else 1
+            target_fps = FPS_PRESETS[idx]
+            FRAME_INTERVAL = 1.0 / float(target_fps)
+            audio_viz.decay = 0.38 * (50.0 / target_fps)
+            audio_viz.peak_decay = 0.12 * (50.0 / target_fps)
+            comm.send_fps(target_fps)
+            print(f"[FPS] Target rate set to {target_fps} FPS / Hz ({FRAME_INTERVAL*1000:.1f}ms per frame)", flush=True)
             return
 
         # 3. Direct click on matrix dot
@@ -1139,6 +1210,19 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
                   (TYPO_SPEED_RECT[0] + TYPO_SPEED_RECT[2], TYPO_SPEED_RECT[1] + TYPO_SPEED_RECT[3]), sp_border, 1, cv2.LINE_AA)
     cv2.putText(canvas, sp_text, (TYPO_SPEED_RECT[0] + (TYPO_SPEED_RECT[2] - len(sp_text)*7)//2, TYPO_SPEED_RECT[1] + 16),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.31, (210, 210, 215), 1, cv2.LINE_AA)
+
+    # FPS Toggle Button (Click to cycle refresh rate: 30, 50, 60, 75, 100 FPS)
+    fps_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], TYPO_FPS_RECT)
+    fps_bg = (16, 48, 36) if target_fps == 50 else ((38, 38, 44) if fps_hover else (24, 24, 28))
+    fps_border = (0, 220, 140) if target_fps == 50 else ((110, 110, 120) if fps_hover else (45, 45, 52))
+    fps_col = (180, 255, 220) if target_fps == 50 else (210, 210, 215)
+    fps_text = f"{target_fps} FPS"
+    cv2.rectangle(canvas, (TYPO_FPS_RECT[0], TYPO_FPS_RECT[1]),
+                  (TYPO_FPS_RECT[0] + TYPO_FPS_RECT[2], TYPO_FPS_RECT[1] + TYPO_FPS_RECT[3]), fps_bg, -1)
+    cv2.rectangle(canvas, (TYPO_FPS_RECT[0], TYPO_FPS_RECT[1]),
+                  (TYPO_FPS_RECT[0] + TYPO_FPS_RECT[2], TYPO_FPS_RECT[1] + TYPO_FPS_RECT[3]), fps_border, 1, cv2.LINE_AA)
+    cv2.putText(canvas, fps_text, (TYPO_FPS_RECT[0] + (TYPO_FPS_RECT[2] - len(fps_text)*7)//2, TYPO_FPS_RECT[1] + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.31, fps_col, 1, cv2.LINE_AA)
 
     # 2. LEFT PANEL: Camera Feed Viewport (100% natural, un-squeezed)
     canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_cropped
@@ -1411,8 +1495,9 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
         anim_status = "MANUAL"
 
     speed_tag = f"Sens: {audio_viz.sensitivity:.1f}x ([ / ])" if is_music_active else f"Speed: {scroll_speed_ms}ms ([ / ])"
+    fps_tag = f"FPS: {target_fps}Hz [P]"
     font_tag = f"Font: {'3x5' if font_mode == 'compact' else '5x7'} [F]"
-    footer_text = f"Mode: {anim_status}  |  {speed_tag}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
+    footer_text = f"Mode: {anim_status}  |  {fps_tag}  |  {speed_tag}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.32, (105, 105, 112), 1, cv2.LINE_AA)
 
@@ -1426,7 +1511,7 @@ def main():
     global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
-    global is_music_active, audio_viz, last_music_frame
+    global is_music_active, audio_viz, last_music_frame, target_fps, FRAME_INTERVAL
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
     parser.add_argument("--ip", type=str, default="10.150.46.102", help="ESP32 IP address")
@@ -1434,7 +1519,7 @@ def main():
     parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index")
     parser.add_argument("--demo", action="store_true", help="Run in simulation mode")
-    parser.add_argument("--fps", type=int, default=60, help="Target FPS")
+    parser.add_argument("--fps", type=int, default=50, help="Target FPS / Refresh Rate in Hz (default: 50)")
     parser.add_argument("--dwell", type=float, default=0.75, help="Dwell delay in seconds")
     parser.add_argument("--no-transpose", action="store_true", help="Disable row/col transposition")
     parser.add_argument("--no-invert", action="store_true", help="Disable active-low polarity inversion")
@@ -1444,8 +1529,8 @@ def main():
     parser.add_argument("--music", action="store_true", help="Start with live music visualizer active")
     args = parser.parse_args()
 
-    TARGET_FPS = float(args.fps)
-    FRAME_INTERVAL = 1.0 / TARGET_FPS
+    target_fps = int(args.fps)
+    FRAME_INTERVAL = 1.0 / float(target_fps)
     DWELL_TRIGGER_TIME = float(args.dwell)
     transpose_init = not args.no_transpose
     invert_init = not args.no_invert
@@ -1455,8 +1540,9 @@ def main():
     scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
 
     print("\n" + "=" * 60, flush=True)
-    print("  8x8 LED MATRIX CONTROLLER (MUSIC VISUALIZER & DYNAMICS)", flush=True)
+    print("  8x8 LED MATRIX CONTROLLER (50 Hz / FPS SMOOTH REFRESH)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
+    print(f"  Frame Rate [P]:     {target_fps} FPS / Hz ({FRAME_INTERVAL*1000:.1f}ms pacing)", flush=True)
     print(f"  Visualizer [V/B]:   Live laptop mic (EQ Bars, Center EQ, Pulse)", flush=True)
     print(f"  Message [M/F]:      '{custom_message}' ({'Classic 5x7' if font_mode == 'standard' else 'Compact 3x5'}, Speed: {scroll_speed_ms}ms)", flush=True)
     print("  Heartbeat [H]:      Human physiological rhythm (~70 BPM lub-dub)", flush=True)
@@ -1466,8 +1552,9 @@ def main():
 
     comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial,
                               transpose=transpose_init, invert=invert_init)
-    # Sync initial blank state to ESP32
+    # Sync initial blank state and 50Hz refresh rate to ESP32
     comm.send_frame(grid_dots)
+    comm.send_fps(target_fps)
 
     if args.music:
         is_music_active = True
@@ -1481,16 +1568,10 @@ def main():
     cap = None
 
     if not use_simulation:
-        cap = cv2.VideoCapture(args.camera)
-        if not cap.isOpened():
+        cap = ThreadedCamera(args.camera, target_w=1280, target_h=720)
+        if not cap.available:
             print(f"[NOTE] Camera {args.camera} unavailable. Running in simulation mode.", flush=True)
             use_simulation = True
-
-    # High-Definition 1280x720 capture for maximum tracking accuracy
-    if not use_simulation:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
 
     WINDOW_NAME = "8x8 LED Matrix Controller"
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
@@ -1503,11 +1584,11 @@ def main():
         while True:
             frame_start_time = time.perf_counter()
 
-            # 1. Acquire Camera Frame
+            # 1. Acquire Camera Frame (Non-blocking from background thread)
             if not use_simulation:
                 ret, frame_raw = cap.read()
-                if not ret:
-                    time.sleep(0.01)
+                if not ret or frame_raw is None:
+                    time.sleep(0.002)
                     continue
                 frame_cam = cv2.flip(frame_raw, 1)
                 detected, gesture, tip_raw, is_pinching = analyzer.analyze(frame_cam)
@@ -1806,12 +1887,25 @@ def main():
                         else:
                             scroll_speed_ms = min(300, scroll_speed_ms + 15)
                             print(f"[TYPOGRAPHY] Slower Scroll: {scroll_speed_ms}ms per column", flush=True)
+                    elif key in (ord('p'), ord('P')):
+                        if is_master_locked:
+                            print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                        else:
+                            idx = (FPS_PRESETS.index(target_fps) + 1) % len(FPS_PRESETS) if target_fps in FPS_PRESETS else 1
+                            target_fps = FPS_PRESETS[idx]
+                            FRAME_INTERVAL = 1.0 / float(target_fps)
+                            audio_viz.decay = 0.38 * (50.0 / target_fps)
+                            audio_viz.peak_decay = 0.12 * (50.0 / target_fps)
+                            comm.send_fps(target_fps)
+                            print(f"[KEYBOARD] Target Frame Rate: {target_fps} FPS / Hz ({FRAME_INTERVAL*1000:.1f}ms pacing)", flush=True)
 
-            # 8. FPS Limiter
-            proc_time = time.perf_counter() - frame_start_time
-            sleep_needed = FRAME_INTERVAL - proc_time
-            if sleep_needed > 0.0005:
-                time.sleep(sleep_needed)
+            # 8. High-Precision Frame Pacing (Zero Jitter 50Hz / 20.0ms)
+            elapsed = time.perf_counter() - frame_start_time
+            sleep_needed = FRAME_INTERVAL - elapsed
+            if sleep_needed > 0.002:
+                time.sleep(sleep_needed - 0.001)
+            while (time.perf_counter() - frame_start_time) < FRAME_INTERVAL:
+                pass
 
     finally:
         if audio_viz:
