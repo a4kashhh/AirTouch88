@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Project: Minimal 8x8 LED Matrix Controller & Hand Gesture Interface
+Project: Minimal 8x8 LED Matrix Controller
 Script:  cv_matrix_controller.py
 
-Features:
-  - Minimalist, distraction-free UI (pure dark canvas, no camera video bloat)
-  - Centered high-contrast 8x8 LED Matrix display with realistic LED glow
-  - Fixed Hand Control Area: mid-air tracking zone maps 1:1 to the 64 dots
-  - Touch Point Dwell Delay: deliberate 0.75s hold with single-fire anti-bounce
-  - Pinch-to-click and direct mouse click support
-  - Minimal controls: Brightness slider, Clear, Heart, Smile
-  - UDP communication to ESP32-C3
+Layout:
+  - Left Side:  Camera View with Fixed Interactive Control Box (Air-Pad)
+  - Right Side: 8x8 LED Matrix Display with minimal Brightness & Action buttons
 ================================================================================
 """
 
@@ -119,10 +114,19 @@ class MatrixCommunicator:
 
 
 # ==============================================================================
-# 2. HAND GESTURE & LANDMARK ANALYZER (RUNS IN BACKGROUND)
+# 2. HAND GESTURE & LANDMARK ANALYZER
 # ==============================================================================
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (9, 10), (10, 11), (11, 12),
+    (13, 14), (14, 15), (15, 16),
+    (0, 17), (17, 18), (18, 19), (19, 20),
+    (5, 9), (9, 13), (13, 17)
+]
+
 class HandGestureAnalyzer:
-    """Extracts landmarks silently in the background without drawing video feed."""
+    """Extracts hand landmarks using MediaPipe."""
     def __init__(self):
         self.available = False
         if not MEDIAPIPE_AVAILABLE:
@@ -155,8 +159,9 @@ class HandGestureAnalyzer:
 
     def analyze(self, frame_bgr):
         if not self.available:
-            return False, "NONE", False, None
+            return False, "NONE", None, False
 
+        h, w, _ = frame_bgr.shape
         frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
         result = self.detector.detect(mp_image)
@@ -164,29 +169,30 @@ class HandGestureAnalyzer:
         hand_detected = False
         gesture_name = "NONE"
         is_pinching = False
-        norm_pointer = None
+        tip_raw_px = None
 
         if result.hand_landmarks and len(result.hand_landmarks) > 0:
             hand_detected = True
             lm_list = result.hand_landmarks[0]
-            norm_pts = [(lm.x, lm.y) for lm in lm_list]
+            pts = [(int(lm.x * w), int(lm.y * h)) for lm in lm_list]
 
-            wrist = norm_pts[0]
-            thumb_tip = norm_pts[4]
-            index_tip = norm_pts[8]
-            middle_tip = norm_pts[12]
-            ring_tip = norm_pts[16]
-            pinky_tip = norm_pts[20]
+            wrist = pts[0]
+            thumb_tip = pts[4]
+            index_tip = pts[8]
+            middle_tip = pts[12]
+            ring_tip = pts[16]
+            pinky_tip = pts[20]
 
-            hand_scale = max(self.dist(wrist, norm_pts[9]), 0.05)
+            tip_raw_px = index_tip
 
-            index_extended = self.dist(index_tip, wrist) > self.dist(norm_pts[6], wrist) * 1.2
-            middle_extended = self.dist(middle_tip, wrist) > self.dist(norm_pts[10], wrist) * 1.2
-            ring_extended = self.dist(ring_tip, wrist) > self.dist(norm_pts[14], wrist) * 1.2
-            pinky_extended = self.dist(pinky_tip, wrist) > self.dist(norm_pts[18], wrist) * 1.2
-
+            hand_scale = max(self.dist(pts[0], pts[9]), 20.0)
             pinch_dist_norm = self.dist(thumb_tip, index_tip) / hand_scale
             is_pinching = (pinch_dist_norm < 0.28)
+
+            index_extended = self.dist(index_tip, wrist) > self.dist(pts[6], wrist) * 1.2
+            middle_extended = self.dist(middle_tip, wrist) > self.dist(pts[10], wrist) * 1.2
+            ring_extended = self.dist(ring_tip, wrist) > self.dist(pts[14], wrist) * 1.2
+            pinky_extended = self.dist(pinky_tip, wrist) > self.dist(pts[18], wrist) * 1.2
 
             if is_pinching:
                 gesture_name = "PINCH"
@@ -201,45 +207,72 @@ class HandGestureAnalyzer:
             else:
                 gesture_name = "TRACK"
 
-            norm_pointer = (index_tip[0], index_tip[1])
+            # Subtle clean skeleton lines on camera
+            for start_idx, end_idx in HAND_CONNECTIONS:
+                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (0, 200, 240), 1, cv2.LINE_AA)
+            for pt in pts:
+                cv2.circle(frame_bgr, pt, 2, (0, 240, 255), -1)
 
-        return hand_detected, gesture_name, is_pinching, norm_pointer
+            if is_pinching:
+                pinch_mid = ((thumb_tip[0] + index_tip[0]) // 2, (thumb_tip[1] + index_tip[1]) // 2)
+                cv2.circle(frame_bgr, pinch_mid, 8, (0, 255, 255), -1)
+
+        return hand_detected, gesture_name, tip_raw_px, is_pinching
 
 
 # ==============================================================================
-# 3. MINIMAL UI GEOMETRY & CONSTANTS
+# 3. UI GEOMETRY & CONSTANTS
 # ==============================================================================
-WINDOW_W = 640
+WINDOW_W = 1240
 WINDOW_H = 720
 
-# Centered 8x8 Matrix Geometry
-MATRIX_ORIGIN_X = 124
-MATRIX_ORIGIN_Y = 125
-DOT_SPACING = 56
-DOT_RADIUS = 18
+# LEFT SIDE: Camera Viewport
+CAM_X = 40
+CAM_Y = 80
+CAM_W = 550
+CAM_H = 460
 
-# Fixed Control Area (Normalized tracking zone in front of webcam: X: 0.15-0.85, Y: 0.15-0.85)
-FIXED_ZONE_X_MIN = 0.15
-FIXED_ZONE_X_MAX = 0.85
-FIXED_ZONE_Y_MIN = 0.15
-FIXED_ZONE_Y_MAX = 0.85
+# Fixed Interactive Control Box (Air-Pad) on Camera
+control_area = {
+    'x': CAM_X + (CAM_W - 380) // 2,  # Centered horizontally
+    'y': CAM_Y + (CAM_H - 380) // 2,  # Centered vertically
+    'w': 380,
+    'h': 380,
+    'locked': True
+}
+
+# Toolbar below Camera
+AREA_BTN_Y = CAM_Y + CAM_H + 20
+AREA_BTN_H = 32
+AREA_BUTTONS = {
+    'LOCK_TOGGLE': (CAM_X,       AREA_BTN_Y, 130, AREA_BTN_H),
+    'CENTER':      (CAM_X + 145, AREA_BTN_Y, 90,  AREA_BTN_H),
+    'CYCLE_SIZE':  (CAM_X + 250, AREA_BTN_Y, 110, AREA_BTN_H),
+    'RESET':       (CAM_X + 375, AREA_BTN_Y, 90,  AREA_BTN_H)
+}
+
+# RIGHT SIDE: 8x8 Matrix Display (Exact minimal style from user's screenshot)
+MATRIX_ORIGIN_X = 720
+MATRIX_ORIGIN_Y = 135
+DOT_SPACING = 54
+DOT_RADIUS = 18
 
 # 8x8 Dot Matrix State (1 = ON, 0 = OFF)
 grid_dots = np.zeros((8, 8), dtype=np.uint8)
 
 # Minimal Brightness Slider
-SLIDER_X = 124
-SLIDER_Y = 572
-SLIDER_W = 392
+SLIDER_X = 720
+SLIDER_Y = 575
+SLIDER_W = 378
 SLIDER_H = 6
 current_brightness = 75
 is_dragging_brightness = False
 
 # Minimal Action Buttons
-BTN_W = 110
+BTN_W = 105
 BTN_H = 34
 BTN_GAP = 31
-BTN_Y = 612
+BTN_Y = 615
 BUTTONS = {
     'CLEAR': (SLIDER_X,                   BTN_Y, BTN_W, BTN_H, "Clear"),
     'HEART': (SLIDER_X + BTN_W + BTN_GAP, BTN_Y, BTN_W, BTN_H, "Heart"),
@@ -255,7 +288,12 @@ last_air_click_time = 0
 last_pinch_state = False
 last_gesture_cmd_time = 0
 click_ripple_anim = None   # (cx, cy, start_time)
+
+# Mouse Interaction State
 mouse_pos = (-1, -1)
+is_dragging_area = False
+is_resizing_area = False
+drag_offset = (0, 0)
 
 
 # ==============================================================================
@@ -275,32 +313,84 @@ def get_dot_at_xy(px, py):
                 return (r, c)
     return None
 
-def get_dot_from_fixed_area(norm_x, norm_y):
+def get_dot_from_control_box(px, py):
     """
-    Maps normalized mid-air hand position inside the Fixed Control Area
-    directly to (r, c) on the 8x8 matrix. Returns None if outside.
+    Maps coordinate (px, py) inside the Fixed Control Box directly to (r, c).
+    Returns None if (px, py) is outside the box.
     """
-    if FIXED_ZONE_X_MIN <= norm_x <= FIXED_ZONE_X_MAX and FIXED_ZONE_Y_MIN <= norm_y <= FIXED_ZONE_Y_MAX:
-        rel_x = (norm_x - FIXED_ZONE_X_MIN) / (FIXED_ZONE_X_MAX - FIXED_ZONE_X_MIN)
-        rel_y = (norm_y - FIXED_ZONE_Y_MIN) / (FIXED_ZONE_Y_MAX - FIXED_ZONE_Y_MIN)
-        c = int(rel_x * 8)
-        r = int(rel_y * 8)
+    bx = control_area['x']
+    by = control_area['y']
+    bw = control_area['w']
+    bh = control_area['h']
+
+    if bx <= px <= bx + bw and by <= py <= by + bh:
+        c = int(((px - bx) / float(bw)) * 8)
+        r = int(((py - by) / float(bh)) * 8)
         return (max(0, min(7, r)), max(0, min(7, c)))
     return None
 
 
 # ==============================================================================
-# 5. MOUSE INTERACTION
+# 5. MOUSE EVENT HANDLER
 # ==============================================================================
 def on_mouse_event(event, x, y, flags, param):
-    """Handles mouse click & drag for dots, slider, and buttons."""
-    global mouse_pos, current_brightness, is_dragging_brightness, click_ripple_anim
+    """Handles mouse click & drag for dots, slider, buttons, and area control."""
+    global mouse_pos, current_brightness, is_dragging_brightness
+    global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
 
     comm = param
     mouse_pos = (x, y)
 
+    ax = control_area['x']
+    ay = control_area['y']
+    aw = control_area['w']
+    ah = control_area['h']
+    resize_handle_rect = (ax + aw - 20, ay + ah - 20, 20, 20)
+
     if event == cv2.EVENT_LBUTTONDOWN:
-        # 1. Click on matrix dot directly
+        # 1. Area Toolbar Buttons (below camera)
+        if is_inside_rect(x, y, AREA_BUTTONS['LOCK_TOGGLE']):
+            control_area['locked'] = not control_area['locked']
+            print(f"[AREA] {'LOCKED' if control_area['locked'] else 'EDIT MODE'}", flush=True)
+            return
+
+        elif is_inside_rect(x, y, AREA_BUTTONS['CENTER']):
+            control_area['x'] = CAM_X + (CAM_W - control_area['w']) // 2
+            control_area['y'] = CAM_Y + (CAM_H - control_area['h']) // 2
+            print("[AREA] Centered on camera view", flush=True)
+            return
+
+        elif is_inside_rect(x, y, AREA_BUTTONS['CYCLE_SIZE']):
+            sizes = [300, 380, 440]
+            curr = control_area['w']
+            next_size = sizes[(sizes.index(curr) + 1) % len(sizes)] if curr in sizes else 380
+            control_area['w'] = next_size
+            control_area['h'] = next_size
+            control_area['x'] = max(CAM_X + 2, min(CAM_X + CAM_W - next_size - 2, control_area['x']))
+            control_area['y'] = max(CAM_Y + 2, min(CAM_Y + CAM_H - next_size - 2, control_area['y']))
+            print(f"[AREA] Size: {next_size}x{next_size}", flush=True)
+            return
+
+        elif is_inside_rect(x, y, AREA_BUTTONS['RESET']):
+            control_area['w'] = 380
+            control_area['h'] = 380
+            control_area['x'] = CAM_X + (CAM_W - 380) // 2
+            control_area['y'] = CAM_Y + (CAM_H - 380) // 2
+            control_area['locked'] = True
+            print("[AREA] Reset to default and locked", flush=True)
+            return
+
+        # 2. In EDIT mode: check drag or resize on Control Box
+        if not control_area['locked']:
+            if is_inside_rect(x, y, resize_handle_rect):
+                is_resizing_area = True
+                return
+            elif is_inside_rect(x, y, (ax, ay, aw, ah)):
+                is_dragging_area = True
+                drag_offset = (x - ax, y - ay)
+                return
+
+        # 3. Direct click on matrix dot
         dot = get_dot_at_xy(x, y)
         if dot is not None:
             r, c = dot
@@ -309,20 +399,20 @@ def on_mouse_event(event, x, y, flags, param):
             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
             cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
             click_ripple_anim = (cx, cy, time.time())
-            print(f"[MOUSE] Toggled Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
+            print(f"[MOUSE] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
             return
 
-        # 2. Click on Brightness Slider
+        # 4. Click on Brightness Slider
         slider_expand = (SLIDER_X - 10, SLIDER_Y - 12, SLIDER_W + 20, SLIDER_H + 24)
         if is_inside_rect(x, y, slider_expand):
             is_dragging_brightness = True
             ratio = (x - SLIDER_X) / float(SLIDER_W)
             current_brightness = int(max(0, min(100, ratio * 100)))
             comm.send_brightness(current_brightness)
-            print(f"[MOUSE] Brightness set to {current_brightness}%", flush=True)
+            print(f"[MOUSE] Brightness: {current_brightness}%", flush=True)
             return
 
-        # 3. Click on Action Buttons
+        # 5. Click on Action Buttons
         for key, (bx, by, bw, bh, label) in BUTTONS.items():
             if is_inside_rect(x, y, (bx, by, bw, bh)):
                 if key == 'CLEAR':
@@ -362,38 +452,157 @@ def on_mouse_event(event, x, y, flags, param):
             current_brightness = int(max(0, min(100, ratio * 100)))
             comm.send_brightness(current_brightness)
 
+        elif is_dragging_area and not control_area['locked']:
+            new_x = x - drag_offset[0]
+            new_y = y - drag_offset[1]
+            control_area['x'] = max(CAM_X + 2, min(CAM_X + CAM_W - control_area['w'] - 2, new_x))
+            control_area['y'] = max(CAM_Y + 2, min(CAM_Y + CAM_H - control_area['h'] - 2, new_y))
+
+        elif is_resizing_area and not control_area['locked']:
+            new_w = max(200, min(CAM_W - (control_area['x'] - CAM_X) - 2, x - control_area['x']))
+            new_h = max(200, min(CAM_H - (control_area['y'] - CAM_Y) - 2, y - control_area['y']))
+            side = min(new_w, new_h)
+            control_area['w'] = side
+            control_area['h'] = side
+
     elif event == cv2.EVENT_LBUTTONUP:
         is_dragging_brightness = False
+        is_dragging_area = False
+        is_resizing_area = False
 
 
 # ==============================================================================
 # 6. MINIMAL RENDERING ENGINE
 # ==============================================================================
-def render_ui(canvas, active_dot, dwell_progress, ip, port, gesture):
-    """Draws a clean, minimal UI focused purely on the 8x8 matrix and essentials."""
+def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, port, gesture):
+    """Draws the clean widescreen UI: Camera View on Left, 8x8 Matrix on Right."""
     global click_ripple_anim
 
-    # 1. Subtle Header
-    cv2.putText(canvas, "8x8 LED MATRIX", (36, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.50, (215, 215, 220), 1, cv2.LINE_AA)
+    # 1. TOP HEADER (Subtle, clean, monochrome)
+    cv2.putText(canvas, "CAMERA VIEW  (CONTROL AREA)", (CAM_X, 44),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 140, 148), 1, cv2.LINE_AA)
+
+    cv2.putText(canvas, "8x8 LED MATRIX", (MATRIX_ORIGIN_X, 44),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 225), 1, cv2.LINE_AA)
 
     # Status indicator (small clean green dot + IP)
-    cv2.circle(canvas, (WINDOW_W - 170, 36), 4, (0, 220, 100), -1)
-    cv2.putText(canvas, f"{ip}:{port}", (WINDOW_W - 156, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 130, 135), 1, cv2.LINE_AA)
+    cv2.circle(canvas, (WINDOW_W - 190, 40), 4, (0, 220, 100), -1)
+    cv2.putText(canvas, f"{ip}:{port}", (WINDOW_W - 176, 44),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 130, 135), 1, cv2.LINE_AA)
 
-    # Subtle divider
-    cv2.line(canvas, (36, 56), (WINDOW_W - 36, 56), (36, 36, 40), 1)
+    # Subtle divider line
+    cv2.line(canvas, (CAM_X, 60), (WINDOW_W - CAM_X, 60), (36, 36, 40), 1)
 
-    # 2. Column & Row Guides (Minimal text labels)
+    # 2. LEFT PANEL: Camera Feed Viewport
+    cam_resized = cv2.resize(frame_cam, (CAM_W, CAM_H))
+    canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_resized
+    cv2.rectangle(canvas, (CAM_X, CAM_Y), (CAM_X + CAM_W, CAM_Y + CAM_H), (45, 45, 52), 1)
+
+    # Fixed Interactive Control Box (Air-Pad)
+    bx = control_area['x']
+    by = control_area['y']
+    bw = control_area['w']
+    bh = control_area['h']
+    is_locked = control_area['locked']
+
+    box_color = (0, 230, 255) if is_locked else (0, 160, 255)
+
+    # Subtle translucent dark fill inside the box
+    overlay = canvas.copy()
+    cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (15, 18, 24), -1)
+    cv2.addWeighted(overlay, 0.22, canvas, 0.78, 0, canvas)
+
+    # Box outline
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), box_color, 2 if is_locked else 2)
+
+    # 8x8 subgrid guide lines
+    cw = bw / 8.0
+    ch = bh / 8.0
+    for i in range(1, 8):
+        gx = int(bx + i * cw)
+        gy = int(by + i * ch)
+        cv2.line(canvas, (gx, by), (gx, by + bh), (65, 75, 85), 1)
+        cv2.line(canvas, (bx, gy), (bx + bw, gy), (65, 75, 85), 1)
+
+    # Coordinate markers on the box
+    for c in range(8):
+        lbl_x = int(bx + c * cw + cw / 2 - 4)
+        cv2.putText(canvas, str(c), (lbl_x, by - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (160, 160, 170), 1)
+    for r in range(8):
+        lbl_y = int(by + r * ch + ch / 2 + 4)
+        cv2.putText(canvas, str(r), (bx - 14, lbl_y), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (160, 160, 170), 1)
+
+    # Highlight active cell inside the control box
+    if active_dot is not None:
+        r, c = active_dot
+        cx1 = int(bx + c * cw)
+        cy1 = int(by + r * ch)
+        cx2 = int(cx1 + cw)
+        cy2 = int(cy1 + ch)
+        cell_overlay = canvas.copy()
+        cv2.rectangle(cell_overlay, (cx1, cy1), (cx2, cy2), (0, 230, 255), -1)
+        cv2.addWeighted(cell_overlay, 0.30, canvas, 0.70, 0, canvas)
+        cv2.rectangle(canvas, (cx1, cy1), (cx2, cy2), (0, 240, 255), 2)
+
+    # Fingertip crosshair & dwell ring inside control box
+    if tip_canvas is not None and is_inside_rect(tip_canvas[0], tip_canvas[1], (bx, by, bw, bh)):
+        tx, ty = tip_canvas
+        cv2.circle(canvas, (tx, ty), 8, (0, 255, 255), 2, cv2.LINE_AA)
+        cv2.circle(canvas, (tx, ty), 3, (0, 200, 255), -1)
+        if dwell_progress > 0.0:
+            end_angle = int(dwell_progress * 360)
+            cv2.ellipse(canvas, (tx, ty), (14, 14), -90, 0, end_angle, (0, 255, 120), 2, cv2.LINE_AA)
+
+    # Control Box Title Tag
+    tag_txt = f"AIR-PAD [{ 'LOCKED' if is_locked else 'EDIT MODE' }]"
+    cv2.rectangle(canvas, (bx, by - 22), (bx + 170, by), box_color, -1)
+    cv2.putText(canvas, tag_txt, (bx + 8, by - 6),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (15, 15, 20), 1, cv2.LINE_AA)
+
+    # Resize handle (when in EDIT mode)
+    if not is_locked:
+        handle_x = bx + bw - 18
+        handle_y = by + bh - 18
+        cv2.rectangle(canvas, (handle_x, handle_y), (bx + bw, by + bh), (0, 160, 255), -1)
+        cv2.putText(canvas, "+", (handle_x + 4, handle_y + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2)
+
+    # Area Control Toolbar (below camera)
+    lock_txt = "Locked" if is_locked else "Edit Mode"
+    for key, (abx, aby, abw, abh) in AREA_BUTTONS.items():
+        is_hov = is_inside_rect(mouse_pos[0], mouse_pos[1], (abx, aby, abw, abh))
+        bg = (40, 40, 46) if is_hov else (28, 28, 32)
+        bdr = (120, 120, 130) if is_hov else (55, 55, 62)
+
+        lbl = ""
+        if key == 'LOCK_TOGGLE':
+            lbl = f"[ {lock_txt} ]"
+            if not is_locked:
+                bdr = (0, 180, 255)
+        elif key == 'CENTER':
+            lbl = "Center"
+        elif key == 'CYCLE_SIZE':
+            lbl = f"Size: {bw}px"
+        elif key == 'RESET':
+            lbl = "Reset"
+
+        cv2.rectangle(canvas, (abx, aby), (abx + abw, aby + abh), bg, -1)
+        cv2.rectangle(canvas, (abx, aby), (abx + abw, aby + abh), bdr, 1, cv2.LINE_AA)
+        cv2.putText(canvas, lbl, (abx + (abw - len(lbl)*8)//2, aby + 21),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (215, 215, 220), 1, cv2.LINE_AA)
+
+    # 3. RIGHT PANEL: 8x8 LED Matrix Display
+    # Column Guides (0..7)
     for c in range(8):
         cx = MATRIX_ORIGIN_X + c * DOT_SPACING
-        cv2.putText(canvas, str(c), (cx - 4, MATRIX_ORIGIN_Y - 30),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (95, 95, 105), 1, cv2.LINE_AA)
+        cv2.putText(canvas, str(c), (cx - 4, MATRIX_ORIGIN_Y - 26),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (100, 100, 110), 1, cv2.LINE_AA)
+    # Row Guides (0..7)
     for r in range(8):
         cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
-        cv2.putText(canvas, str(r), (MATRIX_ORIGIN_X - 34, cy + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.35, (95, 95, 105), 1, cv2.LINE_AA)
+        cv2.putText(canvas, str(r), (MATRIX_ORIGIN_X - 32, cy + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (100, 100, 110), 1, cv2.LINE_AA)
 
-    # 3. Render 64 Circular Dots
+    # Render All 64 Circular LEDs
     for r in range(8):
         for c in range(8):
             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
@@ -402,7 +611,7 @@ def render_ui(canvas, active_dot, dwell_progress, ip, port, gesture):
             is_hover = (active_dot == (r, c))
 
             if is_lit:
-                # Beautiful realistic red LED
+                # Realistic Glowing Red LED (matches screenshot)
                 cv2.circle(canvas, (cx, cy), DOT_RADIUS + 7, (0, 0, 140), -1)       # Ambient halo
                 cv2.circle(canvas, (cx, cy), DOT_RADIUS + 3, (20, 35, 220), -1)     # Mid glow
                 cv2.circle(canvas, (cx, cy), DOT_RADIUS, (40, 70, 255), -1)         # Core
@@ -414,10 +623,9 @@ def render_ui(canvas, active_dot, dwell_progress, ip, port, gesture):
                 cv2.circle(canvas, (cx, cy), DOT_RADIUS, (45, 43, 50), 1, cv2.LINE_AA)
                 cv2.circle(canvas, (cx, cy), 3, (38, 36, 44), -1)
 
-            # Hover Cursor
+            # Hover Ring (on the virtual matrix)
             if is_hover:
                 cv2.circle(canvas, (cx, cy), DOT_RADIUS + 6, (220, 220, 230), 1, cv2.LINE_AA)
-                # Dwell progress arc
                 if dwell_progress > 0.0:
                     end_angle = int(dwell_progress * 360)
                     cv2.ellipse(canvas, (cx, cy), (DOT_RADIUS + 9, DOT_RADIUS + 9),
@@ -447,7 +655,7 @@ def render_ui(canvas, active_dot, dwell_progress, ip, port, gesture):
     # Knob
     cv2.circle(canvas, (SLIDER_X + fill_w, SLIDER_Y + SLIDER_H // 2), 6, (255, 255, 255), -1)
 
-    # 5. Minimal Action Buttons (Clean, monochrome text buttons)
+    # 5. Minimal Action Buttons (Clear, Heart, Smile)
     for key, (bx, by, bw, bh, label) in BUTTONS.items():
         is_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], (bx, by, bw, bh))
         bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
@@ -458,12 +666,12 @@ def render_ui(canvas, active_dot, dwell_progress, ip, port, gesture):
         cv2.putText(canvas, label, (bx + (bw - len(label)*9)//2, by + 21),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 225), 1, cv2.LINE_AA)
 
-    # 6. Minimal Footer
-    cv2.line(canvas, (36, 665), (WINDOW_W - 36, 665), (32, 32, 36), 1)
-    target_text = f"Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
-    status_line = f"Fixed Area Active   |   Hold Delay: {DWELL_TRIGGER_TIME:.2f}s   |   {target_text}"
-    cv2.putText(canvas, status_line, (36, 692),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.36, (110, 110, 118), 1, cv2.LINE_AA)
+    # 6. Bottom Footer
+    cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
+    target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
+    footer_text = f"Fixed Control Box Active   |   Hold Delay: {DWELL_TRIGGER_TIME:.2f}s   |   {target_text}"
+    cv2.putText(canvas, footer_text, (CAM_X, 696),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.36, (115, 115, 122), 1, cv2.LINE_AA)
 
 
 # ==============================================================================
@@ -488,12 +696,12 @@ def main():
     FRAME_INTERVAL = 1.0 / TARGET_FPS
     DWELL_TRIGGER_TIME = float(args.dwell)
 
-    print("\n" + "=" * 54, flush=True)
-    print("  MINIMAL 8x8 LED MATRIX CONTROLLER", flush=True)
+    print("\n" + "=" * 56, flush=True)
+    print("  8x8 LED MATRIX CONTROLLER", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
-    print(f"  Touch Point Delay:  {DWELL_TRIGGER_TIME:.2f}s (single-fire anti-bounce)", flush=True)
-    print(f"  Fixed Control Area: Normalized [0.15 - 0.85]", flush=True)
-    print("=" * 54 + "\n", flush=True)
+    print(f"  Hold Delay:         {DWELL_TRIGGER_TIME:.2f}s (single-fire anti-bounce)", flush=True)
+    print("  Camera View (Left)  |  8x8 Matrix (Right)", flush=True)
+    print("=" * 56 + "\n", flush=True)
 
     comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial)
     analyzer = HandGestureAnalyzer()
@@ -523,40 +731,59 @@ def main():
         while True:
             frame_start_time = time.perf_counter()
 
-            # 1. Process Hand Landmarks in Background (no webcam image rendered to screen)
+            # 1. Acquire Camera Frame
             if not use_simulation:
-                ret, frame_cam = cap.read()
+                ret, frame_raw = cap.read()
                 if not ret:
                     time.sleep(0.01)
                     continue
-                frame_cam = cv2.flip(frame_cam, 1)
-                detected, gesture, is_pinching, norm_pointer = analyzer.analyze(frame_cam)
+                frame_cam = cv2.flip(frame_raw, 1)
+                detected, gesture, tip_raw, is_pinching = analyzer.analyze(frame_cam)
+
+                # Map fingertip from raw camera frame to canvas camera viewport
+                tip_canvas = None
+                if tip_raw is not None:
+                    raw_h, raw_w = frame_cam.shape[:2]
+                    scale_x = CAM_W / float(raw_w)
+                    scale_y = CAM_H / float(raw_h)
+                    tip_canvas = (
+                        int(CAM_X + tip_raw[0] * scale_x),
+                        int(CAM_Y + tip_raw[1] * scale_y)
+                    )
             else:
+                # Simulation mode
+                frame_cam = np.full((CAM_H, CAM_W, 3), 25, dtype=np.uint8)
                 sim_angle += 0.03
-                sim_x = 0.50 + 0.28 * math.sin(sim_angle)
-                sim_y = 0.50 + 0.24 * math.cos(sim_angle * 0.7)
-                norm_pointer = (sim_x, sim_y)
+                bx = control_area['x']
+                by = control_area['y']
+                bw = control_area['w']
+                bh = control_area['h']
+                sim_x = int(bx + bw * 0.5 + (bw * 0.35) * math.sin(sim_angle))
+                sim_y = int(by + bh * 0.5 + (bh * 0.30) * math.cos(sim_angle * 0.7))
+                tip_canvas = (sim_x, sim_y)
                 is_pinching = (int(sim_angle * 2) % 8 == 0)
                 detected = True
                 gesture = "PINCH" if is_pinching else "POINT"
 
-            # 2. Pure Dark Canvas Base
+            # 2. Canvas Base
             canvas = np.full((WINDOW_H, WINDOW_W, 3), 18, dtype=np.uint8)
 
-            # 3. Map Hand from Fixed Area to Matrix Dot
+            # 3. Map Hand from Fixed Control Box to Matrix Dot
             active_dot = None
             dwell_progress = 0.0
 
-            if detected and norm_pointer is not None:
-                active_dot = get_dot_from_fixed_area(norm_pointer[0], norm_pointer[1])
+            if tip_canvas is not None:
+                active_dot = get_dot_from_control_box(tip_canvas[0], tip_canvas[1])
 
-            # Mouse hover fallback
+            # Mouse hover fallback (on matrix or control box)
             if active_dot is None:
                 active_dot = get_dot_at_xy(mouse_pos[0], mouse_pos[1])
+                if active_dot is None:
+                    active_dot = get_dot_from_control_box(mouse_pos[0], mouse_pos[1])
 
             now = time.time()
 
-            # PINCH-TO-CLICK (Instant toggle inside Fixed Area)
+            # PINCH-TO-CLICK (Instant toggle inside Fixed Box)
             if is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.45):
                 if active_dot is not None:
                     r, c = active_dot
@@ -618,8 +845,8 @@ def main():
                     comm.send_command("PATTERN:HEART")
                     last_gesture_cmd_time = now
 
-            # 4. Render Minimal UI
-            render_ui(canvas, active_dot, dwell_progress, comm.udp_ip, comm.udp_port, gesture)
+            # 4. Render Minimal UI (Camera Left, Matrix Right)
+            render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, comm.udp_ip, comm.udp_port, gesture)
 
             # 5. Display Window
             cv2.imshow(WINDOW_NAME, canvas)
@@ -635,6 +862,9 @@ def main():
                 comm.send_command("PATTERN:HEART")
             elif key in (ord('s'), ord('S')):
                 comm.send_command("PATTERN:SMILE")
+            elif key in (ord('l'), ord('L')):
+                control_area['locked'] = not control_area['locked']
+                print(f"[KEYBOARD] Area: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
 
             # 7. FPS Limiter
             proc_time = time.perf_counter() - frame_start_time
