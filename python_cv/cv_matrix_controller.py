@@ -344,9 +344,9 @@ control_area = {
 BRIGHT_ZONE_W = 46
 BRIGHT_ZONE_GAP = 22
 
-# Toolbar below Camera View
-AREA_BTN_Y = CAM_Y + CAM_H + 18
-AREA_BTN_H = 32
+# Toolbar below Camera View - Sleek & Compact
+AREA_BTN_Y = CAM_Y + CAM_H + 20
+AREA_BTN_H = 26
 AREA_BUTTONS = {
     'LOCK_TOGGLE': (CAM_X,       AREA_BTN_Y, 130, AREA_BTN_H),
     'CENTER':      (CAM_X + 145, AREA_BTN_Y, 90,  AREA_BTN_H),
@@ -372,7 +372,70 @@ current_brightness = 75
 is_dragging_brightness = False
 is_hand_adjusting_brightness = False
 
-# 5x7 Typography Font (ASCII 32 ' ' to 90 'Z')
+# Compact 3x5 Typography Font (Centers vertically on 8x8 matrix; fits 2 chars on screen)
+FONT_3X5 = {
+    ' ': [0x00, 0x00],
+    '!': [0x00, 0x2E, 0x00],
+    '"': [0x06, 0x00, 0x06],
+    '#': [0x14, 0x3E, 0x14],
+    '$': [0x2E, 0x3E, 0x3A],
+    '%': [0x22, 0x08, 0x22],
+    '&': [0x14, 0x2A, 0x14],
+    "'": [0x00, 0x06, 0x00],
+    '(': [0x1C, 0x22, 0x00],
+    ')': [0x00, 0x22, 0x1C],
+    '*': [0x14, 0x08, 0x14],
+    '+': [0x08, 0x1C, 0x08],
+    ',': [0x00, 0x20, 0x10],
+    '-': [0x08, 0x08, 0x08],
+    '.': [0x00, 0x20, 0x00],
+    '/': [0x20, 0x18, 0x06],
+    '0': [0x3E, 0x22, 0x3E],
+    '1': [0x12, 0x3E, 0x20],
+    '2': [0x32, 0x2A, 0x26],
+    '3': [0x22, 0x2A, 0x3E],
+    '4': [0x0E, 0x08, 0x3E],
+    '5': [0x2E, 0x2A, 0x3A],
+    '6': [0x3E, 0x2A, 0x3A],
+    '7': [0x02, 0x02, 0x3E],
+    '8': [0x3E, 0x2A, 0x3E],
+    '9': [0x0E, 0x0A, 0x3E],
+    ':': [0x00, 0x14, 0x00],
+    ';': [0x00, 0x24, 0x10],
+    '<': [0x08, 0x14, 0x22],
+    '=': [0x14, 0x14, 0x14],
+    '>': [0x22, 0x14, 0x08],
+    '?': [0x02, 0x25, 0x02],
+    '@': [0x3E, 0x2A, 0x3A],
+    'A': [0x3C, 0x0A, 0x3C],
+    'B': [0x3E, 0x2A, 0x14],
+    'C': [0x1C, 0x22, 0x22],
+    'D': [0x3E, 0x22, 0x1C],
+    'E': [0x3E, 0x2A, 0x22],
+    'F': [0x3E, 0x0A, 0x02],
+    'G': [0x1C, 0x22, 0x3A],
+    'H': [0x3E, 0x08, 0x3E],
+    'I': [0x22, 0x3E, 0x22],
+    'J': [0x10, 0x20, 0x1E],
+    'K': [0x3E, 0x14, 0x22],
+    'L': [0x3E, 0x20, 0x20],
+    'M': [0x3E, 0x0C, 0x3E],
+    'N': [0x3E, 0x04, 0x3E],
+    'O': [0x1C, 0x22, 0x1C],
+    'P': [0x3E, 0x0A, 0x04],
+    'Q': [0x1C, 0x22, 0x3C],
+    'R': [0x3E, 0x1A, 0x24],
+    'S': [0x24, 0x2A, 0x12],
+    'T': [0x02, 0x3E, 0x02],
+    'U': [0x1E, 0x20, 0x1E],
+    'V': [0x0E, 0x30, 0x0E],
+    'W': [0x3E, 0x18, 0x3E],
+    'X': [0x36, 0x08, 0x36],
+    'Y': [0x06, 0x38, 0x06],
+    'Z': [0x32, 0x2A, 0x26],
+}
+
+# Standard 5x7 Typography Font (ASCII 32 ' ' to 90 'Z')
 FONT_5X7 = {
     ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
     '!': [0x00, 0x00, 0x5F, 0x00, 0x00],
@@ -458,12 +521,16 @@ HEART_SMALL = np.array([
     [0,0,0,0,0,0,0,0]
 ], dtype=np.uint8)
 
-def build_scrolling_columns(msg_str):
+font_mode = 'compact'
+
+def build_scrolling_columns(msg_str, font_type='compact'):
     """Generates column-wise bit data for right-to-left scrolling text."""
     cols = []
     cols.extend([0x00] * 8)  # 8 blank lead-in columns
+    font = FONT_3X5 if font_type == 'compact' else FONT_5X7
+    default_cols = [0x00, 0x00, 0x00] if font_type == 'compact' else [0x00, 0x00, 0x00, 0x00, 0x00]
     for ch in msg_str.upper():
-        char_cols = FONT_5X7.get(ch, [0x00, 0x00, 0x00, 0x00, 0x00])
+        char_cols = font.get(ch, default_cols)
         cols.extend(char_cols)
         cols.append(0x00)     # 1-column letter spacing
     cols.extend([0x00] * 8)  # 8 blank trailing columns
@@ -483,11 +550,11 @@ def get_heartbeat_frame(now, start_time):
     is_large = (0.0 <= t < 0.14) or (0.22 <= t < 0.36)
     return (HEART_LARGE, True) if is_large else (HEART_SMALL, False)
 
-# Typography Bar Geometry (Above 8x8 Matrix)
-TYPO_Y = 74
-TYPO_H = 34
-TYPO_INPUT_RECT = (SLIDER_X, TYPO_Y, 266, TYPO_H)
-TYPO_SCROLL_RECT = (SLIDER_X + 276, TYPO_Y, 102, TYPO_H)
+# Typography Bar Geometry (Above 8x8 Matrix) - Sleek & Compact
+TYPO_Y = 72
+TYPO_H = 24
+TYPO_INPUT_RECT = (SLIDER_X, TYPO_Y, 276, TYPO_H)
+TYPO_SCROLL_RECT = (SLIDER_X + 284, TYPO_Y, 94, TYPO_H)
 
 # Animation State Variables
 custom_message = "HELLO"
@@ -502,11 +569,11 @@ is_heartbeat_active = False
 heartbeat_start_time = 0.0
 last_heart_state = None
 
-# Minimal Action Buttons (5 buttons below slider)
+# Minimal Action Buttons (5 buttons below slider) - Sleek & Compact
 BTN_W = 68
-BTN_H = 34
+BTN_H = 26
 BTN_GAP = 9
-BTN_Y = 615
+BTN_Y = 620
 BUTTONS = {
     'CLEAR': (SLIDER_X,                           BTN_Y, BTN_W, BTN_H, "Clear"),
     'HEART': (SLIDER_X + (BTN_W + BTN_GAP)*1,     BTN_Y, BTN_W, BTN_H, "Heart"),
@@ -583,7 +650,7 @@ def on_mouse_event(event, x, y, flags, param):
     global mouse_pos, current_brightness, is_dragging_brightness
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time
-    global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols
+    global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
 
     comm = param
     mouse_pos = (x, y)
@@ -655,10 +722,10 @@ def on_mouse_event(event, x, y, flags, param):
             is_scroll_active = not is_scroll_active
             if is_scroll_active:
                 is_heartbeat_active = False
-                scroll_cols = build_scrolling_columns(custom_message)
+                scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
                 scroll_step = 0
                 last_scroll_time = time.time()
-                print(f"[TYPOGRAPHY] Scrolling started: '{custom_message}'", flush=True)
+                print(f"[TYPOGRAPHY] Scrolling started: '{custom_message}' ({font_mode})", flush=True)
             else:
                 grid_dots.fill(0)
                 comm.send_frame(grid_dots)
@@ -724,12 +791,12 @@ def on_mouse_event(event, x, y, flags, param):
                         print("[ANIMATION] Heartbeat stopped", flush=True)
                 elif key == 'HELLO':
                     custom_message = "HELLO"
-                    scroll_cols = build_scrolling_columns("HELLO")
+                    scroll_cols = build_scrolling_columns("HELLO", font_type=font_mode)
                     scroll_step = 0
                     is_scroll_active = True
                     is_heartbeat_active = False
                     last_scroll_time = time.time()
-                    print("[TYPOGRAPHY] Scrolling preset 'HELLO' right-to-left", flush=True)
+                    print(f"[TYPOGRAPHY] Scrolling preset 'HELLO' right-to-left ({font_mode})", flush=True)
                 elif key == 'SMILE':
                     is_heartbeat_active = False
                     is_scroll_active = False
@@ -786,24 +853,24 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
     cv2.putText(canvas, "CAMERA VIEW  (AIR-PAD & BRIGHTNESS)", (CAM_X, 44),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 140, 148), 1, cv2.LINE_AA)
 
-    cv2.putText(canvas, "8x8 LED MATRIX", (MATRIX_ORIGIN_X, 44),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 225), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "8x8 LED MATRIX", (MATRIX_ORIGIN_X, 42),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.44, (215, 215, 220), 1, cv2.LINE_AA)
 
     if is_master_locked:
-        cv2.rectangle(canvas, (MATRIX_ORIGIN_X + 160, 26), (MATRIX_ORIGIN_X + 270, 50), (20, 70, 160), -1)
-        cv2.rectangle(canvas, (MATRIX_ORIGIN_X + 160, 26), (MATRIX_ORIGIN_X + 270, 50), (0, 160, 255), 1, cv2.LINE_AA)
-        cv2.putText(canvas, "LOCKED", (MATRIX_ORIGIN_X + 185, 43),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (230, 240, 255), 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (MATRIX_ORIGIN_X + 135, 27), (MATRIX_ORIGIN_X + 225, 47), (20, 70, 160), -1)
+        cv2.rectangle(canvas, (MATRIX_ORIGIN_X + 135, 27), (MATRIX_ORIGIN_X + 225, 47), (0, 160, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "LOCKED", (MATRIX_ORIGIN_X + 150, 41),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.32, (230, 240, 255), 1, cv2.LINE_AA)
 
     # Status indicator (small clean green dot + IP)
-    cv2.circle(canvas, (WINDOW_W - 190, 40), 4, (0, 220, 100), -1)
-    cv2.putText(canvas, f"{ip}:{port}", (WINDOW_W - 176, 44),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (130, 130, 135), 1, cv2.LINE_AA)
+    cv2.circle(canvas, (WINDOW_W - 175, 38), 3, (0, 220, 100), -1)
+    cv2.putText(canvas, f"{ip}:{port}", (WINDOW_W - 162, 42),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.34, (120, 120, 125), 1, cv2.LINE_AA)
 
     # Subtle divider line
-    cv2.line(canvas, (CAM_X, 60), (WINDOW_W - CAM_X, 60), (36, 36, 40), 1)
+    cv2.line(canvas, (CAM_X, 58), (WINDOW_W - CAM_X, 58), (36, 36, 40), 1)
 
-    # Typography Bar (Above 8x8 Matrix)
+    # Typography Bar (Above 8x8 Matrix) - Slim & Compact
     in_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], TYPO_INPUT_RECT)
     if is_typing_mode:
         in_bg = (30, 42, 58)
@@ -812,17 +879,17 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
         in_text = f"Type: {custom_message}{cursor}"
         txt_col = (0, 230, 255)
     else:
-        in_bg = (32, 32, 38) if in_hover else (24, 24, 28)
-        in_border = (90, 90, 100) if in_hover else (45, 45, 52)
+        in_bg = (30, 30, 35) if in_hover else (22, 22, 26)
+        in_border = (75, 75, 85) if in_hover else (38, 38, 44)
         in_text = f'Msg: "{custom_message}" [M to edit]'
-        txt_col = (200, 200, 210)
+        txt_col = (195, 195, 205)
 
     cv2.rectangle(canvas, (TYPO_INPUT_RECT[0], TYPO_INPUT_RECT[1]),
                   (TYPO_INPUT_RECT[0] + TYPO_INPUT_RECT[2], TYPO_INPUT_RECT[1] + TYPO_INPUT_RECT[3]), in_bg, -1)
     cv2.rectangle(canvas, (TYPO_INPUT_RECT[0], TYPO_INPUT_RECT[1]),
                   (TYPO_INPUT_RECT[0] + TYPO_INPUT_RECT[2], TYPO_INPUT_RECT[1] + TYPO_INPUT_RECT[3]), in_border, 1, cv2.LINE_AA)
-    cv2.putText(canvas, in_text, (TYPO_INPUT_RECT[0] + 10, TYPO_INPUT_RECT[1] + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.38, txt_col, 1, cv2.LINE_AA)
+    cv2.putText(canvas, in_text, (TYPO_INPUT_RECT[0] + 8, TYPO_INPUT_RECT[1] + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.31, txt_col, 1, cv2.LINE_AA)
 
     # Scroll Toggle Button
     sc_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], TYPO_SCROLL_RECT)
@@ -832,17 +899,17 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
         sc_text = "SCROLL: ON"
         sc_col = (0, 255, 220)
     else:
-        sc_bg = (34, 34, 40) if sc_hover else (24, 24, 28)
-        sc_border = (90, 90, 100) if sc_hover else (45, 45, 52)
+        sc_bg = (30, 30, 35) if sc_hover else (22, 22, 26)
+        sc_border = (75, 75, 85) if sc_hover else (38, 38, 44)
         sc_text = "Scroll: OFF"
-        sc_col = (180, 180, 185)
+        sc_col = (170, 170, 175)
 
     cv2.rectangle(canvas, (TYPO_SCROLL_RECT[0], TYPO_SCROLL_RECT[1]),
                   (TYPO_SCROLL_RECT[0] + TYPO_SCROLL_RECT[2], TYPO_SCROLL_RECT[1] + TYPO_SCROLL_RECT[3]), sc_bg, -1)
     cv2.rectangle(canvas, (TYPO_SCROLL_RECT[0], TYPO_SCROLL_RECT[1]),
                   (TYPO_SCROLL_RECT[0] + TYPO_SCROLL_RECT[2], TYPO_SCROLL_RECT[1] + TYPO_SCROLL_RECT[3]), sc_border, 1, cv2.LINE_AA)
-    cv2.putText(canvas, sc_text, (TYPO_SCROLL_RECT[0] + 12, TYPO_SCROLL_RECT[1] + 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.36, sc_col, 1, cv2.LINE_AA)
+    cv2.putText(canvas, sc_text, (TYPO_SCROLL_RECT[0] + 10, TYPO_SCROLL_RECT[1] + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.31, sc_col, 1, cv2.LINE_AA)
 
     # 2. LEFT PANEL: Camera Feed Viewport (100% natural, un-squeezed)
     canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_cropped
@@ -979,20 +1046,20 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
         cv2.rectangle(canvas, (abx, aby), (abx + abw, aby + abh), bg, -1)
         cv2.rectangle(canvas, (abx, aby), (abx + abw, aby + abh), bdr, 1, cv2.LINE_AA)
-        cv2.putText(canvas, lbl, (abx + (abw - len(lbl)*8)//2, aby + 21),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (215, 215, 220), 1, cv2.LINE_AA)
+        cv2.putText(canvas, lbl, (abx + (abw - len(lbl)*6)//2, aby + 17),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.32, (205, 205, 210), 1, cv2.LINE_AA)
 
     # 3. RIGHT PANEL: 8x8 LED Matrix Display
     # Column Guides (0..7)
     for c in range(8):
         cx = MATRIX_ORIGIN_X + c * DOT_SPACING
         cv2.putText(canvas, str(c), (cx - 4, MATRIX_ORIGIN_Y - 26),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (100, 100, 110), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.33, (90, 90, 98), 1, cv2.LINE_AA)
     # Row Guides (0..7)
     for r in range(8):
         cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
-        cv2.putText(canvas, str(r), (MATRIX_ORIGIN_X - 32, cy + 4),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (100, 100, 110), 1, cv2.LINE_AA)
+        cv2.putText(canvas, str(r), (MATRIX_ORIGIN_X - 30, cy + 4),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.33, (90, 90, 98), 1, cv2.LINE_AA)
 
     # Render All 64 Circular LEDs
     for r in range(8):
@@ -1036,9 +1103,9 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
     # 4. Minimal Brightness Slider
     cv2.putText(canvas, "Brightness", (SLIDER_X, SLIDER_Y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 150, 155), 1, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.32, (140, 140, 145), 1, cv2.LINE_AA)
     cv2.putText(canvas, f"{current_brightness}%", (SLIDER_X + SLIDER_W - 28, SLIDER_Y - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (190, 190, 195), 1, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.32, (170, 170, 175), 1, cv2.LINE_AA)
 
     # Track groove
     cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), (36, 36, 42), -1)
@@ -1088,19 +1155,18 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg_col, -1)
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border_col, 1, cv2.LINE_AA)
-        cv2.putText(canvas, display_label, (bx + (bw - len(display_label)*7)//2, by + 21),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, text_col, 1, cv2.LINE_AA)
+        cv2.putText(canvas, display_label, (bx + (bw - len(display_label)*6)//2, by + 17),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.33, text_col, 1, cv2.LINE_AA)
 
     # 6. Bottom Footer
     cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
     target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
-    t_status = "ON" if transpose else "OFF"
-    i_status = "ON" if invert else "OFF"
     lock_status = "LOCKED [SPACE]" if is_master_locked else "OFF [SPACE]"
     anim_status = "HEARTBEAT" if is_heartbeat_active else ("SCROLL" if is_scroll_active else "MANUAL")
-    footer_text = f"Mode: {anim_status}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  Hold: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
+    font_tag = f"Font: {'3x5' if font_mode == 'compact' else '5x7'} [F]"
+    footer_text = f"Mode: {anim_status}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (115, 115, 122), 1, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.32, (105, 105, 112), 1, cv2.LINE_AA)
 
 
 # ==============================================================================
@@ -1111,7 +1177,7 @@ def main():
     global last_gesture_cmd_time, current_brightness, click_ripple_anim
     global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time
-    global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols
+    global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
     parser.add_argument("--ip", type=str, default="10.150.46.102", help="ESP32 IP address")
@@ -1124,6 +1190,7 @@ def main():
     parser.add_argument("--no-transpose", action="store_true", help="Disable row/col transposition")
     parser.add_argument("--no-invert", action="store_true", help="Disable active-low polarity inversion")
     parser.add_argument("--msg", type=str, default="HELLO", help="Default scrolling message")
+    parser.add_argument("--font", type=str, default="compact", choices=["compact", "standard"], help="Font mode: compact (3x5) or standard (5x7)")
     args = parser.parse_args()
 
     TARGET_FPS = float(args.fps)
@@ -1132,12 +1199,13 @@ def main():
     transpose_init = not args.no_transpose
     invert_init = not args.no_invert
     custom_message = args.msg.upper()
-    scroll_cols = build_scrolling_columns(custom_message)
+    font_mode = args.font
+    scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
 
     print("\n" + "=" * 60, flush=True)
     print("  8x8 LED MATRIX CONTROLLER (TYPOGRAPHY & HEARTBEAT ANIMATIONS)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
-    print(f"  Message [M]:        '{custom_message}' (Right-to-Left Scroll)", flush=True)
+    print(f"  Message [M]:        '{custom_message}' ({'3x5 Compact' if font_mode == 'compact' else '5x7 Standard'}, [F] to toggle)", flush=True)
     print("  Heartbeat [H]:      Human physiological rhythm (~70 BPM lub-dub)", flush=True)
     print(f"  Transpose [T]:      {'ON (row <-> col)' if transpose_init else 'OFF'}", flush=True)
     print(f"  Invert Polarity [I]:{'ON (active-low fixed)' if invert_init else 'OFF'}", flush=True)
@@ -1342,21 +1410,21 @@ def main():
                         is_typing_mode = False
                         is_scroll_active = True
                         is_heartbeat_active = False
-                        scroll_cols = build_scrolling_columns(custom_message)
+                        scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
                         scroll_step = 0
                         last_scroll_time = time.time()
-                        print(f"[TYPOGRAPHY] Message updated & scrolling: '{custom_message}'", flush=True)
+                        print(f"[TYPOGRAPHY] Message updated & scrolling: '{custom_message}' ({font_mode})", flush=True)
                     elif key == 27:  # ESC key - cancel typing
                         is_typing_mode = False
                         print("[TYPOGRAPHY] Typing mode closed.", flush=True)
                     elif key in (8, 127):  # Backspace
                         if len(custom_message) > 0:
                             custom_message = custom_message[:-1]
-                            scroll_cols = build_scrolling_columns(custom_message)
+                            scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
                     elif 32 <= key <= 126:  # Printable ASCII
                         if len(custom_message) < 24:
                             custom_message += chr(key).upper()
-                            scroll_cols = build_scrolling_columns(custom_message)
+                            scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
                 else:
                     if key in (ord('q'), ord('Q'), 27):
                         break
@@ -1423,6 +1491,10 @@ def main():
                     elif key in (ord('l'), ord('L')):
                         control_area['locked'] = not control_area['locked']
                         print(f"[KEYBOARD] Area: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
+                    elif key in (ord('f'), ord('F')):
+                        font_mode = 'standard' if font_mode == 'compact' else 'compact'
+                        scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
+                        print(f"[KEYBOARD] Font Size: {'3x5 Compact' if font_mode == 'compact' else '5x7 Standard'}", flush=True)
 
             # 8. FPS Limiter
             proc_time = time.perf_counter() - frame_start_time
