@@ -38,6 +38,14 @@ try:
 except ImportError:
     SERIAL_AVAILABLE = False
 
+# Optional SoundDevice import for live microphone music visualization
+try:
+    import sounddevice as sd
+    SOUNDDEVICE_AVAILABLE = True
+except ImportError:
+    SOUNDDEVICE_AVAILABLE = False
+    print("[WARNING] sounddevice not installed. Music visualizer unavailable.")
+
 
 # ==============================================================================
 # MODEL ASSET DOWNLOAD HELPER
@@ -571,17 +579,178 @@ is_heartbeat_active = False
 heartbeat_start_time = 0.0
 last_heart_state = None
 
-# Minimal Action Buttons (5 buttons below slider) - Sleek & Compact
-BTN_W = 68
+# ==============================================================================
+# LIVE MICROPHONE AUDIO VISUALIZER
+# ==============================================================================
+class AudioVisualizer:
+    """
+    Captures live audio from laptop mic using sounddevice and computes
+    real-time 8-band frequency equalizer frames or visualizer styles for 8x8 LED matrix.
+    """
+    def __init__(self, sample_rate=44100, block_size=1024):
+        self.sample_rate = sample_rate
+        self.block_size = block_size
+        self.stream = None
+        self.is_running = False
+
+        # Visualization styles: 0 = EQ BARS, 1 = CENTER EQ, 2 = BASS PULSE
+        self.style = 0
+        self.style_names = ["EQ BARS", "CENTER EQ", "PULSE"]
+
+        # Visualizer physics & smoothing
+        self.bars = np.zeros(8, dtype=np.float32)
+        self.peaks = np.zeros(8, dtype=np.float32)
+        self.running_max = 0.08
+        self.decay = 0.45       # Bar gravity decay per frame
+        self.peak_decay = 0.15  # Peak dot gravity decay
+        self.sensitivity = 1.0  # User adjustable multiplier
+
+        # 8 Logarithmic frequency bands across human audible range (60Hz -> 15kHz)
+        self.freq_edges = [60, 150, 350, 700, 1400, 2800, 5000, 8500, 15000]
+
+        # Precompute bin indices for real FFT bins (513 bins)
+        freq_bins = np.fft.rfftfreq(block_size, 1.0 / sample_rate)
+        self.band_slices = []
+        for i in range(8):
+            low = self.freq_edges[i]
+            high = self.freq_edges[i+1]
+            idx = np.where((freq_bins >= low) & (freq_bins < high))[0]
+            if len(idx) == 0:
+                idx = np.array([min(range(len(freq_bins)), key=lambda j: abs(freq_bins[j] - (low + high) / 2))])
+            self.band_slices.append(idx)
+
+        self.latest_fft_mag = np.zeros(len(freq_bins), dtype=np.float32)
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        """Streaming callback invoked by sounddevice on incoming audio chunk."""
+        if status:
+            pass
+        mono = indata[:, 0]
+        windowed = mono * np.hanning(len(mono))
+        fft = np.abs(np.fft.rfft(windowed))
+        self.latest_fft_mag = fft
+
+    def start(self):
+        if not SOUNDDEVICE_AVAILABLE:
+            print("[AUDIO] sounddevice library not available.", flush=True)
+            return False
+        if self.is_running:
+            return True
+        try:
+            self.stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                blocksize=self.block_size,
+                channels=1,
+                dtype='float32',
+                callback=self._audio_callback
+            )
+            self.stream.start()
+            self.is_running = True
+            print(f"[AUDIO] Music Visualizer started (Mic @ {self.sample_rate}Hz, Mode: {self.style_names[self.style]})", flush=True)
+            return True
+        except Exception as e:
+            print(f"[AUDIO ERROR] Could not open microphone stream: {e}", flush=True)
+            self.is_running = False
+            return False
+
+    def stop(self):
+        if self.stream is not None:
+            try:
+                self.stream.stop()
+                self.stream.close()
+            except Exception:
+                pass
+            self.stream = None
+        self.is_running = False
+        self.bars.fill(0)
+        self.peaks.fill(0)
+        print("[AUDIO] Music Visualizer stopped.", flush=True)
+
+    def toggle(self):
+        return self.stop() if self.is_running else self.start()
+
+    def cycle_style(self):
+        self.style = (self.style + 1) % len(self.style_names)
+        print(f"[AUDIO] Visualizer Style switched to: {self.style_names[self.style]}", flush=True)
+        return self.style_names[self.style]
+
+    def get_matrix_frame(self):
+        """Computes current 8x8 binary numpy frame from microphone FFT."""
+        current_band_vals = np.zeros(8, dtype=np.float32)
+        for i, idx_slice in enumerate(self.band_slices):
+            val = float(np.mean(self.latest_fft_mag[idx_slice])) if len(idx_slice) > 0 else 0.0
+            # Visual perceptual EQ weighting
+            curve_boost = [1.5, 1.3, 1.0, 0.9, 1.0, 1.2, 1.6, 2.0][i]
+            current_band_vals[i] = val * curve_boost
+
+        cur_max = float(np.max(current_band_vals))
+        self.running_max = max(0.04, self.running_max * 0.985, cur_max)
+
+        norm_vals = (current_band_vals / (self.running_max + 1e-6)) * 8.0 * self.sensitivity
+        norm_vals = np.clip(norm_vals, 0.0, 8.0)
+
+        # Bar dynamics with instant attack and gravity decay
+        for i in range(8):
+            if norm_vals[i] > self.bars[i]:
+                self.bars[i] = norm_vals[i]
+            else:
+                self.bars[i] = max(0.0, self.bars[i] - self.decay)
+
+            if self.bars[i] >= self.peaks[i]:
+                self.peaks[i] = self.bars[i]
+            else:
+                self.peaks[i] = max(0.0, self.peaks[i] - self.peak_decay)
+
+        frame = np.zeros((8, 8), dtype=np.uint8)
+
+        if self.style == 0:
+            # STYLE 0: CLASSIC 8-COLUMN EQUALIZER BARS (rising from bottom row 7 to top row 0)
+            for c in range(8):
+                height = int(round(self.bars[c]))
+                height = max(0, min(8, height))
+                for r in range(8 - height, 8):
+                    frame[r, c] = 1
+                peak_row = 7 - int(round(self.peaks[c]))
+                if 0 <= peak_row < 8:
+                    frame[peak_row, c] = 1
+
+        elif self.style == 1:
+            # STYLE 1: CENTER-MIRROR EQUALIZER (radiates from rows 3 & 4 outwards)
+            for c in range(8):
+                half_h = int(round(self.bars[c] / 2.0))
+                half_h = max(0, min(4, half_h))
+                for r_offset in range(half_h):
+                    frame[3 - r_offset, c] = 1
+                    frame[4 + r_offset, c] = 1
+
+        elif self.style == 2:
+            # STYLE 2: BASS PULSE (concentric ripple from center triggered by low-end beats)
+            bass_level = (self.bars[0] + self.bars[1]) / 2.0
+            pulse_ring = int(bass_level // 2.0)
+            for r in range(8):
+                for c in range(8):
+                    dist = max(abs(r - 3.5), abs(c - 3.5))
+                    if dist <= pulse_ring + 0.5:
+                        frame[r, c] = 1
+
+        return frame
+
+audio_viz = AudioVisualizer()
+is_music_active = False
+last_music_frame = None
+
+# Minimal Action Buttons (6 buttons below slider) - Sleek & Compact
+BTN_W = 56
 BTN_H = 26
-BTN_GAP = 9
+BTN_GAP = 8
 BTN_Y = 620
 BUTTONS = {
     'CLEAR': (SLIDER_X,                           BTN_Y, BTN_W, BTN_H, "Clear"),
     'HEART': (SLIDER_X + (BTN_W + BTN_GAP)*1,     BTN_Y, BTN_W, BTN_H, "Heart"),
-    'HELLO': (SLIDER_X + (BTN_W + BTN_GAP)*2,     BTN_Y, BTN_W, BTN_H, "Hello"),
-    'SMILE': (SLIDER_X + (BTN_W + BTN_GAP)*3,     BTN_Y, BTN_W, BTN_H, "Smile"),
-    'LOCK':  (SLIDER_X + (BTN_W + BTN_GAP)*4,     BTN_Y, BTN_W, BTN_H, "Lock")
+    'MUSIC': (SLIDER_X + (BTN_W + BTN_GAP)*2,     BTN_Y, BTN_W, BTN_H, "Music"),
+    'HELLO': (SLIDER_X + (BTN_W + BTN_GAP)*3,     BTN_Y, BTN_W, BTN_H, "Hello"),
+    'SMILE': (SLIDER_X + (BTN_W + BTN_GAP)*4,     BTN_Y, BTN_W, BTN_H, "Smile"),
+    'LOCK':  (SLIDER_X + (BTN_W + BTN_GAP)*5,     BTN_Y, BTN_W, BTN_H, "Lock")
 }
 is_master_locked = False
 
@@ -653,6 +822,7 @@ def on_mouse_event(event, x, y, flags, param):
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
+    global is_music_active, audio_viz, last_music_frame
 
     comm = param
     mouse_pos = (x, y)
@@ -713,6 +883,9 @@ def on_mouse_event(event, x, y, flags, param):
             if is_master_locked:
                 print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
                 return
+            if is_music_active:
+                is_music_active = False
+                audio_viz.stop()
             is_typing_mode = not is_typing_mode
             status = "ACTIVE - Type and press ENTER to scroll" if is_typing_mode else "CLOSED"
             print(f"[TYPOGRAPHY] Edit Mode: {status} (Current: '{custom_message}')", flush=True)
@@ -721,6 +894,9 @@ def on_mouse_event(event, x, y, flags, param):
         elif is_inside_rect(x, y, TYPO_SCROLL_RECT):
             if is_master_locked:
                 return
+            if is_music_active:
+                is_music_active = False
+                audio_viz.stop()
             is_scroll_active = not is_scroll_active
             if is_scroll_active:
                 is_heartbeat_active = False
@@ -748,6 +924,9 @@ def on_mouse_event(event, x, y, flags, param):
             if is_master_locked:
                 print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
                 return
+            if is_music_active:
+                is_music_active = False
+                audio_viz.stop()
             is_heartbeat_active = False
             is_scroll_active = False
             r, c = dot
@@ -783,12 +962,18 @@ def on_mouse_event(event, x, y, flags, param):
                     print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
                     return
                 if key == 'CLEAR':
+                    if is_music_active:
+                        is_music_active = False
+                        audio_viz.stop()
                     is_heartbeat_active = False
                     is_scroll_active = False
                     grid_dots.fill(0)
                     comm.send_frame(grid_dots)
                     print("[MATRIX] Cleared", flush=True)
                 elif key == 'HEART':
+                    if is_music_active:
+                        is_music_active = False
+                        audio_viz.stop()
                     is_heartbeat_active = not is_heartbeat_active
                     is_scroll_active = False
                     if is_heartbeat_active:
@@ -799,7 +984,26 @@ def on_mouse_event(event, x, y, flags, param):
                         grid_dots.fill(0)
                         comm.send_frame(grid_dots)
                         print("[ANIMATION] Heartbeat stopped", flush=True)
+                elif key == 'MUSIC':
+                    is_heartbeat_active = False
+                    is_scroll_active = False
+                    is_music_active = not is_music_active
+                    if is_music_active:
+                        if not audio_viz.start():
+                            is_music_active = False
+                            print("[AUDIO] Failed to start microphone visualizer.", flush=True)
+                        else:
+                            last_music_frame = None
+                            print(f"[AUDIO] Music Visualizer ACTIVE ({audio_viz.style_names[audio_viz.style]}). Play audio near your mic!", flush=True)
+                    else:
+                        audio_viz.stop()
+                        grid_dots.fill(0)
+                        comm.send_frame(grid_dots)
+                        print("[AUDIO] Music Visualizer stopped.", flush=True)
                 elif key == 'HELLO':
+                    if is_music_active:
+                        is_music_active = False
+                        audio_viz.stop()
                     custom_message = "HELLO"
                     scroll_cols = build_scrolling_columns("HELLO", font_type=font_mode)
                     scroll_step = 0
@@ -808,6 +1012,9 @@ def on_mouse_event(event, x, y, flags, param):
                     last_scroll_time = time.time()
                     print(f"[TYPOGRAPHY] Scrolling preset 'HELLO' right-to-left ({font_mode})", flush=True)
                 elif key == 'SMILE':
+                    if is_music_active:
+                        is_music_active = False
+                        audio_viz.stop()
                     is_heartbeat_active = False
                     is_scroll_active = False
                     smile = [
@@ -1159,6 +1366,16 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
                 bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
                 border_col = (110, 110, 120) if is_hover else (55, 55, 62)
                 text_col = (220, 220, 225)
+        elif key == 'MUSIC':
+            display_label = "EQ" if is_music_active else "Music"
+            if is_music_active:
+                bg_col = (70, 20, 80) if is_hover else (50, 15, 60)
+                border_col = (255, 80, 220)
+                text_col = (255, 200, 255)
+            else:
+                bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
+                border_col = (110, 110, 120) if is_hover else (55, 55, 62)
+                text_col = (220, 220, 225)
         elif key == 'HELLO':
             display_label = "Hello"
             if is_scroll_active and custom_message == "HELLO":
@@ -1184,8 +1401,16 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
     cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
     target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
     lock_status = "LOCKED [SPACE]" if is_master_locked else "OFF [SPACE]"
-    anim_status = "HEARTBEAT" if is_heartbeat_active else ("SCROLL" if is_scroll_active else "MANUAL")
-    speed_tag = f"Speed: {scroll_speed_ms}ms ([ / ])"
+    if is_music_active:
+        anim_status = f"MUSIC [{audio_viz.style_names[audio_viz.style]}]"
+    elif is_heartbeat_active:
+        anim_status = "HEARTBEAT"
+    elif is_scroll_active:
+        anim_status = "SCROLL"
+    else:
+        anim_status = "MANUAL"
+
+    speed_tag = f"Sens: {audio_viz.sensitivity:.1f}x ([ / ])" if is_music_active else f"Speed: {scroll_speed_ms}ms ([ / ])"
     font_tag = f"Font: {'3x5' if font_mode == 'compact' else '5x7'} [F]"
     footer_text = f"Mode: {anim_status}  |  {speed_tag}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
@@ -1201,6 +1426,7 @@ def main():
     global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
+    global is_music_active, audio_viz, last_music_frame
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
     parser.add_argument("--ip", type=str, default="10.150.46.102", help="ESP32 IP address")
@@ -1215,6 +1441,7 @@ def main():
     parser.add_argument("--msg", type=str, default="HELLO", help="Default scrolling message")
     parser.add_argument("--speed", type=int, default=80, help="Scroll speed in ms per column (default: 80)")
     parser.add_argument("--font", type=str, default="standard", choices=["compact", "standard"], help="Font mode: standard (5x7) or compact (3x5)")
+    parser.add_argument("--music", action="store_true", help="Start with live music visualizer active")
     args = parser.parse_args()
 
     TARGET_FPS = float(args.fps)
@@ -1228,8 +1455,9 @@ def main():
     scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
 
     print("\n" + "=" * 60, flush=True)
-    print("  8x8 LED MATRIX CONTROLLER (TYPOGRAPHY & HEARTBEAT ANIMATIONS)", flush=True)
+    print("  8x8 LED MATRIX CONTROLLER (MUSIC VISUALIZER & DYNAMICS)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
+    print(f"  Visualizer [V/B]:   Live laptop mic (EQ Bars, Center EQ, Pulse)", flush=True)
     print(f"  Message [M/F]:      '{custom_message}' ({'Classic 5x7' if font_mode == 'standard' else 'Compact 3x5'}, Speed: {scroll_speed_ms}ms)", flush=True)
     print("  Heartbeat [H]:      Human physiological rhythm (~70 BPM lub-dub)", flush=True)
     print(f"  Transpose [T]:      {'ON (row <-> col)' if transpose_init else 'OFF'}", flush=True)
@@ -1240,6 +1468,10 @@ def main():
                               transpose=transpose_init, invert=invert_init)
     # Sync initial blank state to ESP32
     comm.send_frame(grid_dots)
+
+    if args.music:
+        is_music_active = True
+        audio_viz.start()
 
     analyzer = HandGestureAnalyzer()
     jitter_filter = AntiJitterFilter(alpha=0.30)
@@ -1341,6 +1573,9 @@ def main():
             # PINCH-TO-CLICK (Instant toggle inside Fixed Box)
             if not is_master_locked and is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.45):
                 if active_dot is not None:
+                    if is_music_active:
+                        is_music_active = False
+                        audio_viz.stop()
                     is_heartbeat_active = False
                     is_scroll_active = False
                     r, c = active_dot
@@ -1360,6 +1595,9 @@ def main():
                         dwell_time = now - dwell_start_time
                         dwell_progress = min(1.0, dwell_time / DWELL_TRIGGER_TIME)
                         if dwell_time >= DWELL_TRIGGER_TIME and (now - last_air_click_time >= 0.50):
+                            if is_music_active:
+                                is_music_active = False
+                                audio_viz.stop()
                             is_heartbeat_active = False
                             is_scroll_active = False
                             r, c = active_dot
@@ -1390,6 +1628,9 @@ def main():
             # Quick gestures when hand is outside the active dots
             if not is_master_locked and active_dot is None and not brightness_active and (now - last_gesture_cmd_time >= 2.5):
                 if gesture == "PALM":
+                    if is_music_active:
+                        is_music_active = False
+                        audio_viz.stop()
                     is_heartbeat_active = True
                     is_scroll_active = False
                     heartbeat_start_time = now
@@ -1397,8 +1638,15 @@ def main():
                     last_gesture_cmd_time = now
                     print("[GESTURE] PALM detected -> Beating Heart activated (~70 BPM)", flush=True)
 
-            # 4.5. Dynamic Animations (Heartbeat & Right-to-Left Typography Scrolling)
-            if is_heartbeat_active and not is_master_locked:
+            # 4.5. Dynamic Animations (Music Visualizer, Heartbeat & Typography Scrolling)
+            if is_music_active and not is_master_locked:
+                viz_frame = audio_viz.get_matrix_frame()
+                if last_music_frame is None or not np.array_equal(viz_frame, last_music_frame):
+                    last_music_frame = viz_frame.copy()
+                    grid_dots[:] = viz_frame
+                    comm.send_frame(grid_dots)
+
+            elif is_heartbeat_active and not is_master_locked:
                 hb_frame, hb_state = get_heartbeat_frame(now, heartbeat_start_time)
                 if hb_state != last_heart_state:
                     last_heart_state = hb_state
@@ -1461,12 +1709,43 @@ def main():
                         if is_master_locked:
                             print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
                         else:
+                            if is_music_active:
+                                is_music_active = False
+                                audio_viz.stop()
                             is_typing_mode = True
                             print(f"[TYPOGRAPHY] Edit Mode: ACTIVE - Type message and press ENTER (Current: '{custom_message}')", flush=True)
+                    elif key in (ord('v'), ord('V')):
+                        if is_master_locked:
+                            print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                        else:
+                            is_music_active = not is_music_active
+                            is_heartbeat_active = False
+                            is_scroll_active = False
+                            if is_music_active:
+                                if not audio_viz.start():
+                                    is_music_active = False
+                                    print("[AUDIO] Failed to start microphone visualizer.", flush=True)
+                                else:
+                                    last_music_frame = None
+                                    print(f"[AUDIO] Music Visualizer ACTIVE (Mode: {audio_viz.style_names[audio_viz.style]}). Play music or speak into mic!", flush=True)
+                            else:
+                                audio_viz.stop()
+                                grid_dots.fill(0)
+                                comm.send_frame(grid_dots)
+                                print("[AUDIO] Music Visualizer stopped.", flush=True)
+                    elif key in (ord('b'), ord('B')):
+                        if is_music_active:
+                            style_name = audio_viz.cycle_style()
+                            print(f"[AUDIO] Style switched to: {style_name}", flush=True)
+                        else:
+                            print("[AUDIO] Visualizer is currently off. Press 'V' or click [Music] to turn on visualizer.", flush=True)
                     elif key in (ord('h'), ord('H')):
                         if is_master_locked:
                             print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
                         else:
+                            if is_music_active:
+                                is_music_active = False
+                                audio_viz.stop()
                             is_heartbeat_active = not is_heartbeat_active
                             is_scroll_active = False
                             if is_heartbeat_active:
@@ -1481,6 +1760,9 @@ def main():
                         if is_master_locked:
                             print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
                         else:
+                            if is_music_active:
+                                is_music_active = False
+                                audio_viz.stop()
                             is_heartbeat_active = False
                             is_scroll_active = False
                             grid_dots.fill(0)
@@ -1490,6 +1772,9 @@ def main():
                         if is_master_locked:
                             print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
                         else:
+                            if is_music_active:
+                                is_music_active = False
+                                audio_viz.stop()
                             is_heartbeat_active = False
                             is_scroll_active = False
                             smile = [
@@ -1521,11 +1806,19 @@ def main():
                         scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
                         print(f"[KEYBOARD] Font Size: {'3x5 Compact' if font_mode == 'compact' else '5x7 Standard'}", flush=True)
                     elif key in (ord(']'), ord('+'), ord('=')):
-                        scroll_speed_ms = max(20, scroll_speed_ms - 15)
-                        print(f"[TYPOGRAPHY] Faster Scroll: {scroll_speed_ms}ms per column", flush=True)
+                        if is_music_active:
+                            audio_viz.sensitivity = min(3.0, round(audio_viz.sensitivity + 0.2, 1))
+                            print(f"[AUDIO] Visualizer Sensitivity: {audio_viz.sensitivity:.1f}x", flush=True)
+                        else:
+                            scroll_speed_ms = max(20, scroll_speed_ms - 15)
+                            print(f"[TYPOGRAPHY] Faster Scroll: {scroll_speed_ms}ms per column", flush=True)
                     elif key in (ord('['), ord('-'), ord('_')):
-                        scroll_speed_ms = min(300, scroll_speed_ms + 15)
-                        print(f"[TYPOGRAPHY] Slower Scroll: {scroll_speed_ms}ms per column", flush=True)
+                        if is_music_active:
+                            audio_viz.sensitivity = max(0.2, round(audio_viz.sensitivity - 0.2, 1))
+                            print(f"[AUDIO] Visualizer Sensitivity: {audio_viz.sensitivity:.1f}x", flush=True)
+                        else:
+                            scroll_speed_ms = min(300, scroll_speed_ms + 15)
+                            print(f"[TYPOGRAPHY] Slower Scroll: {scroll_speed_ms}ms per column", flush=True)
 
             # 8. FPS Limiter
             proc_time = time.perf_counter() - frame_start_time
@@ -1534,6 +1827,8 @@ def main():
                 time.sleep(sleep_needed)
 
     finally:
+        if audio_viz:
+            audio_viz.stop()
         if cap:
             cap.release()
         cv2.destroyAllWindows()
