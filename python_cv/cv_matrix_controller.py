@@ -245,9 +245,11 @@ class AntiJitterFilter:
         return self.filtered_val
 
 class PointerSmoother:
-    """Filters fingertip coordinates to eliminate tremor and jitter."""
-    def __init__(self, alpha=0.50):
-        self.alpha = alpha
+    """Adaptive dual-rate filter: high damping when holding steady, zero-lag tracking when moving."""
+    def __init__(self, alpha_min=0.20, alpha_max=0.65, vel_thresh=18.0):
+        self.alpha_min = alpha_min
+        self.alpha_max = alpha_max
+        self.vel_thresh = vel_thresh
         self.smooth_x = None
         self.smooth_y = None
 
@@ -256,9 +258,14 @@ class PointerSmoother:
             self.smooth_x = float(x)
             self.smooth_y = float(y)
         else:
-            self.smooth_x = self.alpha * x + (1.0 - self.alpha) * self.smooth_x
-            self.smooth_y = self.alpha * y + (1.0 - self.alpha) * self.smooth_y
-        return int(self.smooth_x), int(self.smooth_y)
+            dx = x - self.smooth_x
+            dy = y - self.smooth_y
+            dist = math.hypot(dx, dy)
+            speed_ratio = min(1.0, dist / self.vel_thresh)
+            alpha = self.alpha_min + (self.alpha_max - self.alpha_min) * speed_ratio
+            self.smooth_x = alpha * x + (1.0 - alpha) * self.smooth_x
+            self.smooth_y = alpha * y + (1.0 - alpha) * self.smooth_y
+        return int(round(self.smooth_x)), int(round(self.smooth_y))
 
     def reset(self):
         self.smooth_x = None
@@ -278,9 +285,11 @@ HAND_CONNECTIONS = [
 ]
 
 class HandGestureAnalyzer:
-    """High-accuracy hand landmark detector with pixel-space geometry."""
+    """High-accuracy hand landmark detector with 3D metric geometry and temporal debouncing."""
     def __init__(self):
         self.available = False
+        self.pinch_active = False
+        self.pinch_confirm_frames = 0
         if not MEDIAPIPE_AVAILABLE:
             return
 
@@ -339,19 +348,52 @@ class HandGestureAnalyzer:
 
             tip_raw_px = index_tip
 
-            # Palm size scale
-            hand_scale = max(self.dist(wrist, pts[9]), 25.0)
+            # 2D Palm size scale (wrist to middle MCP 9)
+            hand_scale_2d = max(self.dist(wrist, pts[9]), 25.0)
 
-            # Pinch detection in true pixel space
-            pinch_dist_px = self.dist(thumb_tip, index_tip)
-            pinch_dist_norm = pinch_dist_px / hand_scale
-            is_pinching = (pinch_dist_norm < 0.28)
+            # 2D Pinch distance normalized
+            pinch_dist_2d = self.dist(thumb_tip, index_tip)
+            norm_2d = pinch_dist_2d / hand_scale_2d
+
+            # 3D Euclidean distance using MediaPipe normalized (x, y, z)
+            dx = lm_list[4].x - lm_list[8].x
+            dy = lm_list[4].y - lm_list[8].y
+            dz = lm_list[4].z - lm_list[8].z
+            dist_3d = math.sqrt(dx*dx + dy*dy + dz*dz)
+
+            sx = lm_list[0].x - lm_list[9].x
+            sy = lm_list[0].y - lm_list[9].y
+            sz = lm_list[0].z - lm_list[9].z
+            scale_3d = max(math.sqrt(sx*sx + sy*sy + sz*sz), 0.05)
+            norm_3d = dist_3d / scale_3d
 
             # Finger extensions
             index_ext = self.dist(index_tip, wrist) > self.dist(pts[6], wrist) * 1.15
             middle_ext = self.dist(middle_tip, wrist) > self.dist(pts[10], wrist) * 1.15
             ring_ext = self.dist(ring_tip, wrist) > self.dist(pts[14], wrist) * 1.15
             pinky_ext = self.dist(pinky_tip, wrist) > self.dist(pts[18], wrist) * 1.15
+
+            # Straight pointing posture check:
+            # If index finger is straight and extended, disqualify pinch unless thumb is touching index tip
+            index_segment_len = self.dist(pts[5], pts[6]) + self.dist(pts[6], pts[8])
+            index_straight = (self.dist(pts[5], index_tip) > index_segment_len * 0.88) and index_ext
+
+            # Strict dual-metric pinch candidate:
+            # Both 2D and 3D distance must be small, and not in straight pointing posture
+            pinch_candidate = (norm_2d < 0.18) and (norm_3d < 0.20) and (not index_straight or norm_2d < 0.12)
+
+            # Multi-frame temporal confirmation (2 consecutive frames at 50 FPS ~40ms) and release hysteresis
+            if pinch_candidate:
+                self.pinch_confirm_frames += 1
+                if self.pinch_confirm_frames >= 2:
+                    self.pinch_active = True
+            else:
+                # Release hysteresis: only release if distance clearly opens up
+                if norm_2d > 0.24 or norm_3d > 0.26:
+                    self.pinch_confirm_frames = 0
+                    self.pinch_active = False
+
+            is_pinching = self.pinch_active
 
             if is_pinching:
                 gesture_name = "PINCH"
@@ -376,6 +418,9 @@ class HandGestureAnalyzer:
             if is_pinching:
                 pinch_mid = ((thumb_tip[0] + index_tip[0]) // 2, (thumb_tip[1] + index_tip[1]) // 2)
                 cv2.circle(frame_bgr, pinch_mid, 10, (0, 255, 255), -1)
+        else:
+            self.pinch_confirm_frames = 0
+            self.pinch_active = False
 
         return hand_detected, gesture_name, tip_raw_px, is_pinching
 
@@ -409,10 +454,11 @@ BRIGHT_ZONE_GAP = 22
 AREA_BTN_Y = CAM_Y + CAM_H + 20
 AREA_BTN_H = 26
 AREA_BUTTONS = {
-    'LOCK_TOGGLE': (CAM_X,       AREA_BTN_Y, 130, AREA_BTN_H),
-    'CENTER':      (CAM_X + 145, AREA_BTN_Y, 90,  AREA_BTN_H),
-    'CYCLE_SIZE':  (CAM_X + 250, AREA_BTN_Y, 110, AREA_BTN_H),
-    'RESET':       (CAM_X + 375, AREA_BTN_Y, 90,  AREA_BTN_H)
+    'LOCK_TOGGLE': (CAM_X,       AREA_BTN_Y, 110, AREA_BTN_H),
+    'CENTER':      (CAM_X + 118, AREA_BTN_Y, 75,  AREA_BTN_H),
+    'CYCLE_SIZE':  (CAM_X + 201, AREA_BTN_Y, 95,  AREA_BTN_H),
+    'RESET':       (CAM_X + 304, AREA_BTN_Y, 75,  AREA_BTN_H),
+    'AIR_MODE':    (CAM_X + 387, AREA_BTN_Y, 120, AREA_BTN_H)
 }
 
 # RIGHT SIDE: 8x8 LED Matrix Display
@@ -814,10 +860,14 @@ BUTTONS = {
 is_master_locked = False
 
 # Touch Point Dwell Delay & Anti-Bounce Settings
-DWELL_TRIGGER_TIME = 0.75  # Deliberate 750ms dwell hold
+DWELL_TRIGGER_TIME = 0.85  # Deliberate 850ms dwell hold
 dwell_dot = None
 dwell_start_time = 0
 dwell_lockout_dot = None   # Single-fire: won't re-toggle until finger leaves dot
+dwell_anchor_pos = None    # (x, y) anchor to ensure hand is held stationary during dwell
+DWELL_MAX_DRIFT = 18       # Max allowable drift in pixels from anchor to charge dwell
+current_air_dot = None     # Current sticky-locked dot
+air_mode = "BOTH"          # "BOTH", "PINCH", "DWELL"
 last_air_click_time = 0
 last_pinch_state = False
 last_gesture_cmd_time = 0
@@ -847,9 +897,11 @@ def get_dot_at_xy(px, py):
                 return (r, c)
     return None
 
-def get_dot_from_control_box(px, py):
+def get_dot_from_control_box(px, py, current_dot=None, hysteresis_px=7):
     """
     Maps coordinate (px, py) inside the Fixed Control Box directly to (r, c).
+    With sticky cell hysteresis: stays locked to current_dot unless the fingertip
+    crosses at least hysteresis_px into an adjacent cell.
     Returns None if (px, py) is outside the box.
     """
     bx = control_area['x']
@@ -857,11 +909,25 @@ def get_dot_from_control_box(px, py):
     bw = control_area['w']
     bh = control_area['h']
 
-    if bx <= px <= bx + bw and by <= py <= by + bh:
-        c = int(((px - bx) / float(bw)) * 8)
-        r = int(((py - by) / float(bh)) * 8)
-        return (max(0, min(7, r)), max(0, min(7, c)))
-    return None
+    if not (bx <= px <= bx + bw and by <= py <= by + bh):
+        return None
+
+    cw = bw / 8.0
+    ch = bh / 8.0
+
+    # If already hovering a dot, check if still within its hysteresis boundary
+    if current_dot is not None:
+        cr, cc = current_dot
+        cell_x1 = bx + cc * cw - hysteresis_px
+        cell_x2 = bx + (cc + 1) * cw + hysteresis_px
+        cell_y1 = by + cr * ch - hysteresis_px
+        cell_y2 = by + (cr + 1) * ch + hysteresis_px
+        if cell_x1 <= px <= cell_x2 and cell_y1 <= py <= cell_y2:
+            return current_dot
+
+    c = int(((px - bx) / float(bw)) * 8)
+    r = int(((py - by) / float(bh)) * 8)
+    return (max(0, min(7, r)), max(0, min(7, c)))
 
 def get_bright_zone_rect():
     """Returns (x, y, w, h) of the dedicated hand brightness zone on camera."""
@@ -881,7 +947,7 @@ def on_mouse_event(event, x, y, flags, param):
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
-    global is_music_active, audio_viz, last_music_frame, target_fps, FRAME_INTERVAL
+    global is_music_active, audio_viz, last_music_frame, target_fps, FRAME_INTERVAL, air_mode
 
     comm = param
     mouse_pos = (x, y)
@@ -925,6 +991,13 @@ def on_mouse_event(event, x, y, flags, param):
             control_area['y'] = CAM_Y + 45
             control_area['locked'] = True
             print("[AREA] Reset to default and locked", flush=True)
+            return
+
+        elif is_inside_rect(x, y, AREA_BUTTONS['AIR_MODE']):
+            modes = ["BOTH", "PINCH", "DWELL"]
+            idx = (modes.index(air_mode) + 1) % len(modes) if air_mode in modes else 0
+            air_mode = modes[idx]
+            print(f"[GESTURE] Air interaction mode set to: {air_mode}", flush=True)
             return
 
         # 2. In EDIT mode: check drag or resize on Control Box
@@ -1356,6 +1429,14 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
             lbl = f"Size: {bw}px"
         elif key == 'RESET':
             lbl = "Reset"
+        elif key == 'AIR_MODE':
+            lbl = f"Air: {air_mode}"
+            if air_mode == "PINCH":
+                bdr = (0, 220, 255)
+            elif air_mode == "DWELL":
+                bdr = (0, 255, 120)
+            else:
+                bdr = (255, 180, 50)
 
         cv2.rectangle(canvas, (abx, aby), (abx + abw, aby + abh), bg, -1)
         cv2.rectangle(canvas, (abx, aby), (abx + abw, aby + abh), bdr, 1, cv2.LINE_AA)
@@ -1496,8 +1577,8 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
     speed_tag = f"Sens: {audio_viz.sensitivity:.1f}x ([ / ])" if is_music_active else f"Speed: {scroll_speed_ms}ms ([ / ])"
     fps_tag = f"FPS: {target_fps}Hz [P]"
-    font_tag = f"Font: {'3x5' if font_mode == 'compact' else '5x7'} [F]"
-    footer_text = f"Mode: {anim_status}  |  {fps_tag}  |  {speed_tag}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
+    air_tag = f"Air: {air_mode} [G]"
+    footer_text = f"Mode: {anim_status}  |  {air_tag}  |  {fps_tag}  |  {speed_tag}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.32, (105, 105, 112), 1, cv2.LINE_AA)
 
@@ -1512,6 +1593,7 @@ def main():
     global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
     global is_music_active, audio_viz, last_music_frame, target_fps, FRAME_INTERVAL
+    global dwell_anchor_pos, current_air_dot, air_mode
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
     parser.add_argument("--ip", type=str, default="10.150.46.102", help="ESP32 IP address")
@@ -1520,7 +1602,7 @@ def main():
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index")
     parser.add_argument("--demo", action="store_true", help="Run in simulation mode")
     parser.add_argument("--fps", type=int, default=50, help="Target FPS / Refresh Rate in Hz (default: 50)")
-    parser.add_argument("--dwell", type=float, default=0.75, help="Dwell delay in seconds")
+    parser.add_argument("--dwell", type=float, default=0.85, help="Dwell delay in seconds (default: 0.85)")
     parser.add_argument("--no-transpose", action="store_true", help="Disable row/col transposition")
     parser.add_argument("--no-invert", action="store_true", help="Disable active-low polarity inversion")
     parser.add_argument("--msg", type=str, default="HELLO", help="Default scrolling message")
@@ -1546,6 +1628,7 @@ def main():
     print(f"  Visualizer [V/B]:   Live laptop mic (EQ Bars, Center EQ, Pulse)", flush=True)
     print(f"  Message [M/F]:      '{custom_message}' ({'Classic 5x7' if font_mode == 'standard' else 'Compact 3x5'}, Speed: {scroll_speed_ms}ms)", flush=True)
     print("  Heartbeat [H]:      Human physiological rhythm (~70 BPM lub-dub)", flush=True)
+    print(f"  Air Mode [G]:       {air_mode} (Pinch + Stationary Dwell)", flush=True)
     print(f"  Transpose [T]:      {'ON (row <-> col)' if transpose_init else 'OFF'}", flush=True)
     print(f"  Invert Polarity [I]:{'ON (active-low fixed)' if invert_init else 'OFF'}", flush=True)
     print("=" * 60 + "\n", flush=True)
@@ -1562,7 +1645,7 @@ def main():
 
     analyzer = HandGestureAnalyzer()
     jitter_filter = AntiJitterFilter(alpha=0.30)
-    smoother = PointerSmoother(alpha=0.50)
+    smoother = PointerSmoother(alpha_min=0.20, alpha_max=0.65, vel_thresh=18.0)
 
     use_simulation = args.demo or not analyzer.available
     cap = None
@@ -1637,42 +1720,59 @@ def main():
                 comm.send_brightness(current_brightness)
 
             # 4. Map Hand from Fixed Control Box to Matrix Dot
-            active_dot = None
+            hand_dot = None
+            if detected and tip_canvas is not None and not brightness_active:
+                hand_dot = get_dot_from_control_box(tip_canvas[0], tip_canvas[1], current_dot=current_air_dot)
+                current_air_dot = hand_dot
+            else:
+                current_air_dot = None
+
+            # Mouse hover fallback purely for virtual matrix hover ring (never triggers air dwell/clicks)
+            mouse_hover_dot = None
+            if hand_dot is None:
+                mouse_hover_dot = get_dot_at_xy(mouse_pos[0], mouse_pos[1])
+                if mouse_hover_dot is None:
+                    mouse_hover_dot = get_dot_from_control_box(mouse_pos[0], mouse_pos[1])
+
+            active_dot = hand_dot if hand_dot is not None else mouse_hover_dot
             dwell_progress = 0.0
-
-            if tip_canvas is not None and not brightness_active:
-                active_dot = get_dot_from_control_box(tip_canvas[0], tip_canvas[1])
-
-            # Mouse hover fallback (on matrix or control box)
-            if active_dot is None:
-                active_dot = get_dot_at_xy(mouse_pos[0], mouse_pos[1])
-                if active_dot is None:
-                    active_dot = get_dot_from_control_box(mouse_pos[0], mouse_pos[1])
-
             now = time.time()
 
             # PINCH-TO-CLICK (Instant toggle inside Fixed Box)
-            if not is_master_locked and is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.45):
-                if active_dot is not None:
+            # Strictly requires physical hand inside box (hand_dot is not None)
+            can_pinch = air_mode in ("BOTH", "PINCH")
+            if not is_master_locked and can_pinch and is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.40):
+                if hand_dot is not None:
                     if is_music_active:
                         is_music_active = False
                         audio_viz.stop()
                     is_heartbeat_active = False
                     is_scroll_active = False
-                    r, c = active_dot
+                    r, c = hand_dot
                     grid_dots[r, c] ^= 1
                     comm.send_toggle_dot(r, c)
                     last_air_click_time = now
-                    dwell_lockout_dot = active_dot
+                    dwell_lockout_dot = hand_dot
+                    dwell_dot = None
+                    dwell_anchor_pos = None
+                    dwell_start_time = now
                     cx = MATRIX_ORIGIN_X + c * DOT_SPACING
                     cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
                     click_ripple_anim = (cx, cy, now)
-                    print(f"[PINCH] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
+                    print(f"[AIR PINCH] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
 
-            # DWELL-TO-CLICK (Deliberate hold for DWELL_TRIGGER_TIME with single-fire lockout)
-            if not is_master_locked and active_dot is not None and not is_pinching:
-                if active_dot == dwell_dot:
-                    if active_dot != dwell_lockout_dot:
+            # DWELL-TO-CLICK (Deliberate stationary hold; physical hand inside box only, never mouse!)
+            can_dwell = air_mode in ("BOTH", "DWELL")
+            if not is_master_locked and can_dwell and hand_dot is not None and not is_pinching:
+                if hand_dot == dwell_dot:
+                    # Check drift from stationary anchor
+                    drift = math.hypot(tip_canvas[0] - dwell_anchor_pos[0], tip_canvas[1] - dwell_anchor_pos[1]) if dwell_anchor_pos else 999.0
+                    if drift > DWELL_MAX_DRIFT:
+                        # Hand moved fast across cells -> re-anchor and reset dwell
+                        dwell_anchor_pos = tip_canvas
+                        dwell_start_time = now
+                        dwell_progress = 0.0
+                    elif hand_dot != dwell_lockout_dot:
                         dwell_time = now - dwell_start_time
                         dwell_progress = min(1.0, dwell_time / DWELL_TRIGGER_TIME)
                         if dwell_time >= DWELL_TRIGGER_TIME and (now - last_air_click_time >= 0.50):
@@ -1681,25 +1781,27 @@ def main():
                                 audio_viz.stop()
                             is_heartbeat_active = False
                             is_scroll_active = False
-                            r, c = active_dot
+                            r, c = hand_dot
                             grid_dots[r, c] ^= 1
                             comm.send_toggle_dot(r, c)
                             last_air_click_time = now
-                            dwell_lockout_dot = active_dot  # Single fire: locked until finger leaves dot
+                            dwell_lockout_dot = hand_dot  # Single fire: locked until finger leaves dot
                             dwell_progress = 1.0
                             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
                             cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
                             click_ripple_anim = (cx, cy, now)
-                            print(f"[DWELL] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'} (Hold: {DWELL_TRIGGER_TIME:.2f}s)", flush=True)
+                            print(f"[AIR DWELL] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'} (Hold: {DWELL_TRIGGER_TIME:.2f}s)", flush=True)
                     else:
                         dwell_progress = 0.0
                 else:
-                    dwell_dot = active_dot
+                    dwell_dot = hand_dot
+                    dwell_anchor_pos = tip_canvas
                     dwell_start_time = now
                     dwell_lockout_dot = None
                     dwell_progress = 0.0
             else:
                 dwell_dot = None
+                dwell_anchor_pos = None
                 dwell_start_time = now
                 dwell_lockout_dot = None
                 dwell_progress = 0.0
@@ -1898,6 +2000,11 @@ def main():
                             audio_viz.peak_decay = 0.12 * (50.0 / target_fps)
                             comm.send_fps(target_fps)
                             print(f"[KEYBOARD] Target Frame Rate: {target_fps} FPS / Hz ({FRAME_INTERVAL*1000:.1f}ms pacing)", flush=True)
+                    elif key in (ord('g'), ord('G')):
+                        modes = ["BOTH", "PINCH", "DWELL"]
+                        idx = (modes.index(air_mode) + 1) % len(modes) if air_mode in modes else 0
+                        air_mode = modes[idx]
+                        print(f"[KEYBOARD] Air Interaction Mode: {air_mode}", flush=True)
 
             # 8. High-Precision Frame Pacing (Zero Jitter 50Hz / 20.0ms)
             elapsed = time.perf_counter() - frame_start_time
