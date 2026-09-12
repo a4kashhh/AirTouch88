@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Project: Minimal 8x8 LED Matrix Controller
+Project: Minimal 8x8 LED Matrix Controller & Hand Gesture Interface
 Script:  cv_matrix_controller.py
 
 Layout:
-  - Left Side:  Camera View with Fixed Interactive Control Box (Air-Pad)
-  - Right Side: 8x8 LED Matrix Display with minimal Brightness & Action buttons
+  - Left Side:  HD Camera View with Fixed 8x8 Control Box + Hand Brightness Zone
+  - Right Side: Minimalist 8x8 LED Matrix Display with Brightness & Action Buttons
 ================================================================================
 """
 
@@ -114,7 +114,44 @@ class MatrixCommunicator:
 
 
 # ==============================================================================
-# 2. HAND GESTURE & LANDMARK ANALYZER
+# 2. ANTI-JITTER & POINTER SMOOTHER
+# ==============================================================================
+class AntiJitterFilter:
+    """Provides EMA continuous filtering for analog brightness."""
+    def __init__(self, alpha=0.30):
+        self.alpha = alpha
+        self.filtered_val = 75.0
+
+    def update(self, new_val):
+        if self.filtered_val is None:
+            self.filtered_val = float(new_val)
+        else:
+            self.filtered_val = self.alpha * new_val + (1.0 - self.alpha) * self.filtered_val
+        return self.filtered_val
+
+class PointerSmoother:
+    """Filters fingertip coordinates to eliminate tremor and jitter."""
+    def __init__(self, alpha=0.50):
+        self.alpha = alpha
+        self.smooth_x = None
+        self.smooth_y = None
+
+    def update(self, x, y):
+        if self.smooth_x is None:
+            self.smooth_x = float(x)
+            self.smooth_y = float(y)
+        else:
+            self.smooth_x = self.alpha * x + (1.0 - self.alpha) * self.smooth_x
+            self.smooth_y = self.alpha * y + (1.0 - self.alpha) * self.smooth_y
+        return int(self.smooth_x), int(self.smooth_y)
+
+    def reset(self):
+        self.smooth_x = None
+        self.smooth_y = None
+
+
+# ==============================================================================
+# 3. HIGH-ACCURACY HAND GESTURE & LANDMARK ANALYZER
 # ==============================================================================
 HAND_CONNECTIONS = [
     (0, 1), (1, 2), (2, 3), (3, 4),
@@ -126,7 +163,7 @@ HAND_CONNECTIONS = [
 ]
 
 class HandGestureAnalyzer:
-    """Extracts hand landmarks using MediaPipe."""
+    """High-accuracy hand landmark detector with pixel-space geometry."""
     def __init__(self):
         self.available = False
         if not MEDIAPIPE_AVAILABLE:
@@ -141,11 +178,12 @@ class HandGestureAnalyzer:
                 model_asset_path=MODEL_PATH,
                 delegate=python.BaseOptions.Delegate.CPU
             )
+            # High sensitivity thresholds for reliable detection in any lighting
             options = vision.HandLandmarkerOptions(
                 base_options=base_options,
                 num_hands=1,
-                min_hand_detection_confidence=0.6,
-                min_hand_presence_confidence=0.6,
+                min_hand_detection_confidence=0.5,
+                min_hand_presence_confidence=0.5,
                 min_tracking_confidence=0.5,
                 running_mode=vision.RunningMode.IMAGE
             )
@@ -174,6 +212,7 @@ class HandGestureAnalyzer:
         if result.hand_landmarks and len(result.hand_landmarks) > 0:
             hand_detected = True
             lm_list = result.hand_landmarks[0]
+            # Precise isotropic pixel coordinates
             pts = [(int(lm.x * w), int(lm.y * h)) for lm in lm_list]
 
             wrist = pts[0]
@@ -185,64 +224,74 @@ class HandGestureAnalyzer:
 
             tip_raw_px = index_tip
 
-            hand_scale = max(self.dist(pts[0], pts[9]), 20.0)
-            pinch_dist_norm = self.dist(thumb_tip, index_tip) / hand_scale
+            # Hand scale based on palm size (wrist to middle knuckle)
+            hand_scale = max(self.dist(wrist, pts[9]), 25.0)
+
+            # Pinch detection in true pixel space
+            pinch_dist_px = self.dist(thumb_tip, index_tip)
+            pinch_dist_norm = pinch_dist_px / hand_scale
             is_pinching = (pinch_dist_norm < 0.28)
 
-            index_extended = self.dist(index_tip, wrist) > self.dist(pts[6], wrist) * 1.2
-            middle_extended = self.dist(middle_tip, wrist) > self.dist(pts[10], wrist) * 1.2
-            ring_extended = self.dist(ring_tip, wrist) > self.dist(pts[14], wrist) * 1.2
-            pinky_extended = self.dist(pinky_tip, wrist) > self.dist(pts[18], wrist) * 1.2
+            # Finger extensions
+            index_ext = self.dist(index_tip, wrist) > self.dist(pts[6], wrist) * 1.15
+            middle_ext = self.dist(middle_tip, wrist) > self.dist(pts[10], wrist) * 1.15
+            ring_ext = self.dist(ring_tip, wrist) > self.dist(pts[14], wrist) * 1.15
+            pinky_ext = self.dist(pinky_tip, wrist) > self.dist(pts[18], wrist) * 1.15
 
             if is_pinching:
                 gesture_name = "PINCH"
-            elif index_extended and not middle_extended and not ring_extended and not pinky_extended:
+            elif index_ext and not middle_ext and not ring_ext and not pinky_ext:
                 gesture_name = "POINT"
-            elif index_extended and middle_extended and not ring_extended and not pinky_extended:
+            elif index_ext and middle_ext and not ring_ext and not pinky_ext:
                 gesture_name = "PEACE"
-            elif index_extended and middle_extended and ring_extended and pinky_extended:
+            elif index_ext and middle_ext and ring_ext and pinky_ext:
                 gesture_name = "PALM"
-            elif not index_extended and not middle_extended and not ring_extended and not pinky_extended:
+            elif not index_ext and not middle_ext and not ring_ext and not pinky_ext:
                 gesture_name = "FIST"
             else:
                 gesture_name = "TRACK"
 
-            # Subtle clean skeleton lines on camera
+            # Clean skeleton overlay on camera view
             for start_idx, end_idx in HAND_CONNECTIONS:
-                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (0, 200, 240), 1, cv2.LINE_AA)
-            for pt in pts:
-                cv2.circle(frame_bgr, pt, 2, (0, 240, 255), -1)
+                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (0, 210, 255), 2, cv2.LINE_AA)
+            for i, pt in enumerate(pts):
+                pt_col = (0, 255, 180) if i in (4, 8) else (255, 140, 50)
+                cv2.circle(frame_bgr, pt, 3, pt_col, -1)
 
             if is_pinching:
                 pinch_mid = ((thumb_tip[0] + index_tip[0]) // 2, (thumb_tip[1] + index_tip[1]) // 2)
-                cv2.circle(frame_bgr, pinch_mid, 8, (0, 255, 255), -1)
+                cv2.circle(frame_bgr, pinch_mid, 10, (0, 255, 255), -1)
 
         return hand_detected, gesture_name, tip_raw_px, is_pinching
 
 
 # ==============================================================================
-# 3. UI GEOMETRY & CONSTANTS
+# 4. UI GEOMETRY & CONSTANTS
 # ==============================================================================
-WINDOW_W = 1240
+WINDOW_W = 1260
 WINDOW_H = 720
 
 # LEFT SIDE: Camera Viewport
-CAM_X = 40
+CAM_X = 35
 CAM_Y = 80
-CAM_W = 550
-CAM_H = 460
+CAM_W = 590
+CAM_H = 475
 
-# Fixed Interactive Control Box (Air-Pad) on Camera
+# Fixed 8x8 Control Box (Air-Pad) on Camera
 control_area = {
-    'x': CAM_X + (CAM_W - 380) // 2,  # Centered horizontally
-    'y': CAM_Y + (CAM_H - 380) // 2,  # Centered vertically
+    'x': CAM_X + 25,
+    'y': CAM_Y + 45,
     'w': 380,
     'h': 380,
     'locked': True
 }
 
-# Toolbar below Camera
-AREA_BTN_Y = CAM_Y + CAM_H + 20
+# Dedicated Hand Brightness Control Zone (on Camera, to the right of 8x8 box)
+BRIGHT_ZONE_W = 46
+BRIGHT_ZONE_GAP = 22
+
+# Toolbar below Camera View
+AREA_BTN_Y = CAM_Y + CAM_H + 18
 AREA_BTN_H = 32
 AREA_BUTTONS = {
     'LOCK_TOGGLE': (CAM_X,       AREA_BTN_Y, 130, AREA_BTN_H),
@@ -251,8 +300,8 @@ AREA_BUTTONS = {
     'RESET':       (CAM_X + 375, AREA_BTN_Y, 90,  AREA_BTN_H)
 }
 
-# RIGHT SIDE: 8x8 Matrix Display (Exact minimal style from user's screenshot)
-MATRIX_ORIGIN_X = 720
+# RIGHT SIDE: 8x8 LED Matrix Display
+MATRIX_ORIGIN_X = 730
 MATRIX_ORIGIN_Y = 135
 DOT_SPACING = 54
 DOT_RADIUS = 18
@@ -260,13 +309,14 @@ DOT_RADIUS = 18
 # 8x8 Dot Matrix State (1 = ON, 0 = OFF)
 grid_dots = np.zeros((8, 8), dtype=np.uint8)
 
-# Minimal Brightness Slider
-SLIDER_X = 720
+# Minimal Brightness Slider (on right side)
+SLIDER_X = 730
 SLIDER_Y = 575
 SLIDER_W = 378
 SLIDER_H = 6
 current_brightness = 75
 is_dragging_brightness = False
+is_hand_adjusting_brightness = False
 
 # Minimal Action Buttons
 BTN_W = 105
@@ -297,7 +347,7 @@ drag_offset = (0, 0)
 
 
 # ==============================================================================
-# 4. COORDINATE MAPPING & HIT TESTING
+# 5. COORDINATE MAPPING & HIT TESTING
 # ==============================================================================
 def is_inside_rect(px, py, rect):
     rx, ry, rw, rh = rect
@@ -329,9 +379,17 @@ def get_dot_from_control_box(px, py):
         return (max(0, min(7, r)), max(0, min(7, c)))
     return None
 
+def get_bright_zone_rect():
+    """Returns (x, y, w, h) of the dedicated hand brightness zone on camera."""
+    bx = control_area['x'] + control_area['w'] + BRIGHT_ZONE_GAP
+    by = control_area['y']
+    bw = BRIGHT_ZONE_W
+    bh = control_area['h']
+    return (bx, by, bw, bh)
+
 
 # ==============================================================================
-# 5. MOUSE EVENT HANDLER
+# 6. MOUSE EVENT HANDLER
 # ==============================================================================
 def on_mouse_event(event, x, y, flags, param):
     """Handles mouse click & drag for dots, slider, buttons, and area control."""
@@ -355,18 +413,19 @@ def on_mouse_event(event, x, y, flags, param):
             return
 
         elif is_inside_rect(x, y, AREA_BUTTONS['CENTER']):
-            control_area['x'] = CAM_X + (CAM_W - control_area['w']) // 2
+            control_area['x'] = CAM_X + 25
             control_area['y'] = CAM_Y + (CAM_H - control_area['h']) // 2
             print("[AREA] Centered on camera view", flush=True)
             return
 
         elif is_inside_rect(x, y, AREA_BUTTONS['CYCLE_SIZE']):
-            sizes = [300, 380, 440]
+            sizes = [320, 380, 420]
             curr = control_area['w']
             next_size = sizes[(sizes.index(curr) + 1) % len(sizes)] if curr in sizes else 380
             control_area['w'] = next_size
             control_area['h'] = next_size
-            control_area['x'] = max(CAM_X + 2, min(CAM_X + CAM_W - next_size - 2, control_area['x']))
+            # Clamp inside camera viewport leaving room for brightness bar
+            control_area['x'] = max(CAM_X + 2, min(CAM_X + CAM_W - next_size - BRIGHT_ZONE_W - BRIGHT_ZONE_GAP - 5, control_area['x']))
             control_area['y'] = max(CAM_Y + 2, min(CAM_Y + CAM_H - next_size - 2, control_area['y']))
             print(f"[AREA] Size: {next_size}x{next_size}", flush=True)
             return
@@ -374,8 +433,8 @@ def on_mouse_event(event, x, y, flags, param):
         elif is_inside_rect(x, y, AREA_BUTTONS['RESET']):
             control_area['w'] = 380
             control_area['h'] = 380
-            control_area['x'] = CAM_X + (CAM_W - 380) // 2
-            control_area['y'] = CAM_Y + (CAM_H - 380) // 2
+            control_area['x'] = CAM_X + 25
+            control_area['y'] = CAM_Y + 45
             control_area['locked'] = True
             print("[AREA] Reset to default and locked", flush=True)
             return
@@ -455,11 +514,13 @@ def on_mouse_event(event, x, y, flags, param):
         elif is_dragging_area and not control_area['locked']:
             new_x = x - drag_offset[0]
             new_y = y - drag_offset[1]
-            control_area['x'] = max(CAM_X + 2, min(CAM_X + CAM_W - control_area['w'] - 2, new_x))
+            max_x = CAM_X + CAM_W - control_area['w'] - BRIGHT_ZONE_W - BRIGHT_ZONE_GAP - 5
+            control_area['x'] = max(CAM_X + 2, min(max_x, new_x))
             control_area['y'] = max(CAM_Y + 2, min(CAM_Y + CAM_H - control_area['h'] - 2, new_y))
 
         elif is_resizing_area and not control_area['locked']:
-            new_w = max(200, min(CAM_W - (control_area['x'] - CAM_X) - 2, x - control_area['x']))
+            max_w = CAM_W - (control_area['x'] - CAM_X) - BRIGHT_ZONE_W - BRIGHT_ZONE_GAP - 5
+            new_w = max(200, min(max_w, x - control_area['x']))
             new_h = max(200, min(CAM_H - (control_area['y'] - CAM_Y) - 2, y - control_area['y']))
             side = min(new_w, new_h)
             control_area['w'] = side
@@ -472,14 +533,14 @@ def on_mouse_event(event, x, y, flags, param):
 
 
 # ==============================================================================
-# 6. MINIMAL RENDERING ENGINE
+# 7. RENDERING ENGINE
 # ==============================================================================
-def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, port, gesture):
+def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, port, gesture, brightness_active):
     """Draws the clean widescreen UI: Camera View on Left, 8x8 Matrix on Right."""
     global click_ripple_anim
 
     # 1. TOP HEADER (Subtle, clean, monochrome)
-    cv2.putText(canvas, "CAMERA VIEW  (CONTROL AREA)", (CAM_X, 44),
+    cv2.putText(canvas, "CAMERA VIEW  (AIR-PAD & BRIGHTNESS)", (CAM_X, 44),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.44, (140, 140, 148), 1, cv2.LINE_AA)
 
     cv2.putText(canvas, "8x8 LED MATRIX", (MATRIX_ORIGIN_X, 44),
@@ -498,7 +559,7 @@ def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, por
     canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_resized
     cv2.rectangle(canvas, (CAM_X, CAM_Y), (CAM_X + CAM_W, CAM_Y + CAM_H), (45, 45, 52), 1)
 
-    # Fixed Interactive Control Box (Air-Pad)
+    # --- Fixed 8x8 Control Box (Air-Pad) ---
     bx = control_area['x']
     by = control_area['y']
     bw = control_area['w']
@@ -513,7 +574,7 @@ def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, por
     cv2.addWeighted(overlay, 0.22, canvas, 0.78, 0, canvas)
 
     # Box outline
-    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), box_color, 2 if is_locked else 2)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), box_color, 2)
 
     # 8x8 subgrid guide lines
     cw = bw / 8.0
@@ -555,7 +616,7 @@ def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, por
 
     # Control Box Title Tag
     tag_txt = f"AIR-PAD [{ 'LOCKED' if is_locked else 'EDIT MODE' }]"
-    cv2.rectangle(canvas, (bx, by - 22), (bx + 170, by), box_color, -1)
+    cv2.rectangle(canvas, (bx, by - 22), (bx + 165, by), box_color, -1)
     cv2.putText(canvas, tag_txt, (bx + 8, by - 6),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.35, (15, 15, 20), 1, cv2.LINE_AA)
 
@@ -565,6 +626,48 @@ def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, por
         handle_y = by + bh - 18
         cv2.rectangle(canvas, (handle_x, handle_y), (bx + bw, by + bh), (0, 160, 255), -1)
         cv2.putText(canvas, "+", (handle_x + 4, handle_y + 14), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2)
+
+    # --- DEDICATED HAND BRIGHTNESS CONTROL ZONE (ON CAMERA) ---
+    br_x, br_y, br_w, br_h = get_bright_zone_rect()
+
+    # Brightness zone background
+    br_bg_overlay = canvas.copy()
+    cv2.rectangle(br_bg_overlay, (br_x, br_y), (br_x + br_w, br_y + br_h), (18, 22, 32), -1)
+    cv2.addWeighted(br_bg_overlay, 0.35, canvas, 0.65, 0, canvas)
+
+    br_border_col = (0, 255, 255) if brightness_active else (70, 80, 95)
+    cv2.rectangle(canvas, (br_x, br_y), (br_x + br_w, br_y + br_h), br_border_col, 2 if brightness_active else 1)
+
+    # Inner vertical slider track
+    track_pad_x = 14
+    track_x = br_x + track_pad_x
+    track_w = br_w - 2 * track_pad_x
+    track_y = br_y + 35
+    track_h = br_h - 70
+
+    cv2.rectangle(canvas, (track_x, track_y), (track_x + track_w, track_y + track_h), (35, 38, 48), -1)
+    cv2.rectangle(canvas, (track_x, track_y), (track_x + track_w, track_y + track_h), (75, 85, 100), 1)
+
+    # Vertical fill (from bottom up)
+    fill_h = int(track_h * (current_brightness / 100.0))
+    fill_col = (0, 230, 255) if brightness_active else (0, 150, 220)
+    cv2.rectangle(canvas, (track_x + 1, track_y + track_h - fill_h),
+                  (track_x + track_w - 1, track_y + track_h), fill_col, -1)
+
+    # Knob
+    knob_y = track_y + track_h - fill_h
+    cv2.circle(canvas, (track_x + track_w // 2, knob_y), 7, (255, 255, 255), -1)
+    cv2.circle(canvas, (track_x + track_w // 2, knob_y), 7, (0, 180, 255), 2)
+
+    # Labels on Brightness Zone
+    cv2.putText(canvas, "BRIGHT", (br_x + 4, br_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (0, 220, 255), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"{current_brightness}%", (br_x + 6, br_y + br_h - 14), cv2.FONT_HERSHEY_DUPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
+
+    # Active tag if hand is in zone
+    if brightness_active:
+        cv2.putText(canvas, "ADJUSTING", (br_x - 10, br_y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 255, 120), 1, cv2.LINE_AA)
+    else:
+        cv2.putText(canvas, "MOVE HAND", (br_x - 12, br_y - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.32, (140, 140, 150), 1, cv2.LINE_AA)
 
     # Area Control Toolbar (below camera)
     lock_txt = "Locked" if is_locked else "Edit Mode"
@@ -669,18 +772,18 @@ def render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, ip, por
     # 6. Bottom Footer
     cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
     target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
-    footer_text = f"Fixed Control Box Active   |   Hold Delay: {DWELL_TRIGGER_TIME:.2f}s   |   {target_text}"
+    footer_text = f"Air-Pad Active  |  Hand Brightness Bar Active  |  Hold Delay: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.36, (115, 115, 122), 1, cv2.LINE_AA)
 
 
 # ==============================================================================
-# 7. MAIN LOOP
+# 8. MAIN LOOP
 # ==============================================================================
 def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state
     global last_gesture_cmd_time, current_brightness, click_ripple_anim
-    global dwell_lockout_dot, DWELL_TRIGGER_TIME
+    global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
     parser.add_argument("--ip", type=str, default="10.194.177.102", help="ESP32 IP address")
@@ -696,15 +799,17 @@ def main():
     FRAME_INTERVAL = 1.0 / TARGET_FPS
     DWELL_TRIGGER_TIME = float(args.dwell)
 
-    print("\n" + "=" * 56, flush=True)
-    print("  8x8 LED MATRIX CONTROLLER", flush=True)
+    print("\n" + "=" * 58, flush=True)
+    print("  8x8 LED MATRIX CONTROLLER (HIGH ACCURACY + HAND BRIGHTNESS)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
     print(f"  Hold Delay:         {DWELL_TRIGGER_TIME:.2f}s (single-fire anti-bounce)", flush=True)
-    print("  Camera View (Left)  |  8x8 Matrix (Right)", flush=True)
-    print("=" * 56 + "\n", flush=True)
+    print("  Hand Brightness:    Move hand into vertical bar on camera", flush=True)
+    print("=" * 58 + "\n", flush=True)
 
     comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial)
     analyzer = HandGestureAnalyzer()
+    jitter_filter = AntiJitterFilter(alpha=0.30)
+    smoother = PointerSmoother(alpha=0.50)
 
     use_simulation = args.demo or not analyzer.available
     cap = None
@@ -715,9 +820,10 @@ def main():
             print(f"[NOTE] Camera {args.camera} unavailable. Running in simulation mode.", flush=True)
             use_simulation = True
 
+    # High-Definition 1280x720 capture for maximum MediaPipe tracking accuracy
     if not use_simulation:
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
 
     WINDOW_NAME = "8x8 LED Matrix Controller"
@@ -740,16 +846,17 @@ def main():
                 frame_cam = cv2.flip(frame_raw, 1)
                 detected, gesture, tip_raw, is_pinching = analyzer.analyze(frame_cam)
 
-                # Map fingertip from raw camera frame to canvas camera viewport
+                # Smooth and map fingertip from HD camera frame to canvas coordinates
                 tip_canvas = None
                 if tip_raw is not None:
                     raw_h, raw_w = frame_cam.shape[:2]
                     scale_x = CAM_W / float(raw_w)
                     scale_y = CAM_H / float(raw_h)
-                    tip_canvas = (
-                        int(CAM_X + tip_raw[0] * scale_x),
-                        int(CAM_Y + tip_raw[1] * scale_y)
-                    )
+                    raw_mapped_x = int(CAM_X + tip_raw[0] * scale_x)
+                    raw_mapped_y = int(CAM_Y + tip_raw[1] * scale_y)
+                    tip_canvas = smoother.update(raw_mapped_x, raw_mapped_y)
+                else:
+                    smoother.reset()
             else:
                 # Simulation mode
                 frame_cam = np.full((CAM_H, CAM_W, 3), 25, dtype=np.uint8)
@@ -768,11 +875,25 @@ def main():
             # 2. Canvas Base
             canvas = np.full((WINDOW_H, WINDOW_W, 3), 18, dtype=np.uint8)
 
-            # 3. Map Hand from Fixed Control Box to Matrix Dot
+            # 3. HAND BRIGHTNESS CONTROL
+            # Check if hand is in the dedicated Brightness Zone (on camera, to right of 8x8 box)
+            brightness_active = False
+            bright_rect = get_bright_zone_rect()
+
+            if tip_canvas is not None and is_inside_rect(tip_canvas[0], tip_canvas[1], bright_rect):
+                brightness_active = True
+                br_x, br_y, br_w, br_h = bright_rect
+                # Ratio: bottom = 0%, top = 100%
+                b_ratio = (br_y + br_h - tip_canvas[1]) / float(br_h)
+                raw_b = int(max(0.0, min(1.0, b_ratio)) * 100)
+                current_brightness = int(jitter_filter.update(raw_b))
+                comm.send_brightness(current_brightness)
+
+            # 4. Map Hand from Fixed Control Box to Matrix Dot
             active_dot = None
             dwell_progress = 0.0
 
-            if tip_canvas is not None:
+            if tip_canvas is not None and not brightness_active:
                 active_dot = get_dot_from_control_box(tip_canvas[0], tip_canvas[1])
 
             # Mouse hover fallback (on matrix or control box)
@@ -829,7 +950,7 @@ def main():
             last_pinch_state = is_pinching
 
             # Quick gestures when hand is outside the active dots
-            if active_dot is None and (now - last_gesture_cmd_time >= 2.5):
+            if active_dot is None and not brightness_active and (now - last_gesture_cmd_time >= 2.5):
                 if gesture == "PALM":
                     heart = [
                         [0,1,1,0,0,1,1,0],
@@ -845,13 +966,14 @@ def main():
                     comm.send_command("PATTERN:HEART")
                     last_gesture_cmd_time = now
 
-            # 4. Render Minimal UI (Camera Left, Matrix Right)
-            render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress, comm.udp_ip, comm.udp_port, gesture)
+            # 5. Render Minimal UI (Camera Left, Matrix Right)
+            render_ui(canvas, frame_cam, tip_canvas, active_dot, dwell_progress,
+                      comm.udp_ip, comm.udp_port, gesture, brightness_active)
 
-            # 5. Display Window
+            # 6. Display Window
             cv2.imshow(WINDOW_NAME, canvas)
 
-            # 6. Keyboard Shortcuts
+            # 7. Keyboard Shortcuts
             key = cv2.waitKey(1) & 0xFF
             if key in (ord('q'), ord('Q'), 27):
                 break
@@ -866,7 +988,7 @@ def main():
                 control_area['locked'] = not control_area['locked']
                 print(f"[KEYBOARD] Area: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
 
-            # 7. FPS Limiter
+            # 8. FPS Limiter
             proc_time = time.perf_counter() - frame_start_time
             sleep_needed = FRAME_INTERVAL - proc_time
             if sleep_needed > 0.0005:
