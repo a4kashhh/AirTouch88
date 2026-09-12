@@ -373,15 +373,17 @@ is_dragging_brightness = False
 is_hand_adjusting_brightness = False
 
 # Minimal Action Buttons
-BTN_W = 105
+BTN_W = 86
 BTN_H = 34
-BTN_GAP = 31
+BTN_GAP = 11
 BTN_Y = 615
 BUTTONS = {
-    'CLEAR': (SLIDER_X,                   BTN_Y, BTN_W, BTN_H, "Clear"),
-    'HEART': (SLIDER_X + BTN_W + BTN_GAP, BTN_Y, BTN_W, BTN_H, "Heart"),
-    'SMILE': (SLIDER_X + (BTN_W + BTN_GAP)*2, BTN_Y, BTN_W, BTN_H, "Smile")
+    'CLEAR': (SLIDER_X,                           BTN_Y, BTN_W, BTN_H, "Clear"),
+    'HEART': (SLIDER_X + (BTN_W + BTN_GAP)*1,     BTN_Y, BTN_W, BTN_H, "Heart"),
+    'SMILE': (SLIDER_X + (BTN_W + BTN_GAP)*2,     BTN_Y, BTN_W, BTN_H, "Smile"),
+    'LOCK':  (SLIDER_X + (BTN_W + BTN_GAP)*3,     BTN_Y, BTN_W, BTN_H, "Lock")
 }
+is_master_locked = False
 
 # Touch Point Dwell Delay & Anti-Bounce Settings
 DWELL_TRIGGER_TIME = 0.75  # Deliberate 750ms dwell hold
@@ -449,6 +451,7 @@ def on_mouse_event(event, x, y, flags, param):
     """Handles mouse click & drag for dots, slider, buttons, and area control."""
     global mouse_pos, current_brightness, is_dragging_brightness
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
+    global is_master_locked
 
     comm = param
     mouse_pos = (x, y)
@@ -507,6 +510,9 @@ def on_mouse_event(event, x, y, flags, param):
         # 3. Direct click on matrix dot
         dot = get_dot_at_xy(x, y)
         if dot is not None:
+            if is_master_locked:
+                print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
+                return
             r, c = dot
             grid_dots[r, c] ^= 1
             comm.send_toggle_dot(r, c)
@@ -519,6 +525,8 @@ def on_mouse_event(event, x, y, flags, param):
         # 4. Click on Brightness Slider
         slider_expand = (SLIDER_X - 10, SLIDER_Y - 12, SLIDER_W + 20, SLIDER_H + 24)
         if is_inside_rect(x, y, slider_expand):
+            if is_master_locked:
+                return
             is_dragging_brightness = True
             ratio = (x - SLIDER_X) / float(SLIDER_W)
             current_brightness = int(max(0, min(100, ratio * 100)))
@@ -529,6 +537,14 @@ def on_mouse_event(event, x, y, flags, param):
         # 5. Click on Action Buttons
         for key, (bx, by, bw, bh, label) in BUTTONS.items():
             if is_inside_rect(x, y, (bx, by, bw, bh)):
+                if key == 'LOCK':
+                    is_master_locked = not is_master_locked
+                    status_str = "LOCKED (No changes allowed)" if is_master_locked else "UNLOCKED"
+                    print(f"[LOCK] Master Lock: {status_str}", flush=True)
+                    return
+                if is_master_locked:
+                    print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
+                    return
                 if key == 'CLEAR':
                     grid_dots.fill(0)
                     comm.send_frame(grid_dots)
@@ -561,7 +577,7 @@ def on_mouse_event(event, x, y, flags, param):
                 return
 
     elif event == cv2.EVENT_MOUSEMOVE:
-        if is_dragging_brightness:
+        if is_dragging_brightness and not is_master_locked:
             ratio = (x - SLIDER_X) / float(SLIDER_W)
             current_brightness = int(max(0, min(100, ratio * 100)))
             comm.send_brightness(current_brightness)
@@ -600,6 +616,12 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
     cv2.putText(canvas, "8x8 LED MATRIX", (MATRIX_ORIGIN_X, 44),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.52, (220, 220, 225), 1, cv2.LINE_AA)
+
+    if is_master_locked:
+        cv2.rectangle(canvas, (MATRIX_ORIGIN_X + 160, 26), (MATRIX_ORIGIN_X + 270, 50), (20, 70, 160), -1)
+        cv2.rectangle(canvas, (MATRIX_ORIGIN_X + 160, 26), (MATRIX_ORIGIN_X + 270, 50), (0, 160, 255), 1, cv2.LINE_AA)
+        cv2.putText(canvas, "LOCKED", (MATRIX_ORIGIN_X + 185, 43),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (230, 240, 255), 1, cv2.LINE_AA)
 
     # Status indicator (small clean green dot + IP)
     cv2.circle(canvas, (WINDOW_W - 190, 40), 4, (0, 220, 100), -1)
@@ -812,23 +834,37 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
     # Knob
     cv2.circle(canvas, (SLIDER_X + fill_w, SLIDER_Y + SLIDER_H // 2), 6, (255, 255, 255), -1)
 
-    # 5. Minimal Action Buttons (Clear, Heart, Smile)
+    # 5. Minimal Action Buttons (Clear, Heart, Smile, Lock)
     for key, (bx, by, bw, bh, label) in BUTTONS.items():
         is_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], (bx, by, bw, bh))
-        bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
-        border_col = (110, 110, 120) if is_hover else (55, 55, 62)
+        if key == 'LOCK':
+            display_label = "LOCKED" if is_master_locked else "Lock"
+            if is_master_locked:
+                bg_col = (20, 70, 160) if is_hover else (15, 50, 120)
+                border_col = (0, 160, 255)
+                text_col = (240, 240, 255)
+            else:
+                bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
+                border_col = (110, 110, 120) if is_hover else (55, 55, 62)
+                text_col = (220, 220, 225)
+        else:
+            display_label = label
+            bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
+            border_col = (110, 110, 120) if is_hover else (55, 55, 62)
+            text_col = (220, 220, 225)
 
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg_col, -1)
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border_col, 1, cv2.LINE_AA)
-        cv2.putText(canvas, label, (bx + (bw - len(label)*9)//2, by + 21),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 220, 225), 1, cv2.LINE_AA)
+        cv2.putText(canvas, display_label, (bx + (bw - len(display_label)*8)//2, by + 21),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
 
     # 6. Bottom Footer
     cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
     target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
     t_status = "ON" if transpose else "OFF"
     i_status = "ON" if invert else "OFF"
-    footer_text = f"ESP32: {ip}:{port}  |  Transpose: {t_status} [T]  |  Invert: {i_status} [I]  |  Hold: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
+    lock_status = "LOCKED [SPACE]" if is_master_locked else "OFF [SPACE]"
+    footer_text = f"Lock: {lock_status}  |  Transpose: {t_status} [T]  |  Invert: {i_status} [I]  |  Hold: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.36, (115, 115, 122), 1, cv2.LINE_AA)
 
@@ -840,6 +876,7 @@ def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state
     global last_gesture_cmd_time, current_brightness, click_ripple_anim
     global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
+    global is_master_locked
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
     parser.add_argument("--ip", type=str, default="10.150.46.102", help="ESP32 IP address")
@@ -945,7 +982,7 @@ def main():
             brightness_active = False
             bright_rect = get_bright_zone_rect()
 
-            if tip_canvas is not None and is_inside_rect(tip_canvas[0], tip_canvas[1], bright_rect):
+            if not is_master_locked and tip_canvas is not None and is_inside_rect(tip_canvas[0], tip_canvas[1], bright_rect):
                 brightness_active = True
                 br_x, br_y, br_w, br_h = bright_rect
                 # Ratio: bottom = 0%, top = 100%
@@ -970,7 +1007,7 @@ def main():
             now = time.time()
 
             # PINCH-TO-CLICK (Instant toggle inside Fixed Box)
-            if is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.45):
+            if not is_master_locked and is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.45):
                 if active_dot is not None:
                     r, c = active_dot
                     grid_dots[r, c] ^= 1
@@ -983,7 +1020,7 @@ def main():
                     print(f"[PINCH] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
 
             # DWELL-TO-CLICK (Deliberate hold for DWELL_TRIGGER_TIME with single-fire lockout)
-            if active_dot is not None and not is_pinching:
+            if not is_master_locked and active_dot is not None and not is_pinching:
                 if active_dot == dwell_dot:
                     if active_dot != dwell_lockout_dot:
                         dwell_time = now - dwell_start_time
@@ -1015,7 +1052,7 @@ def main():
             last_pinch_state = is_pinching
 
             # Quick gestures when hand is outside the active dots
-            if active_dot is None and not brightness_active and (now - last_gesture_cmd_time >= 2.5):
+            if not is_master_locked and active_dot is None and not brightness_active and (now - last_gesture_cmd_time >= 2.5):
                 if gesture == "PALM":
                     heart = [
                         [0,1,1,0,0,1,1,0],
@@ -1043,35 +1080,48 @@ def main():
             key = cv2.waitKey(1) & 0xFF
             if key in (ord('q'), ord('Q'), 27):
                 break
+            elif key == ord(' '):
+                is_master_locked = not is_master_locked
+                status_str = "LOCKED (No changes allowed)" if is_master_locked else "UNLOCKED"
+                print(f"[LOCK] Master Lock: {status_str}", flush=True)
             elif key in (ord('c'), ord('C')):
-                grid_dots.fill(0)
-                comm.send_frame(grid_dots)
+                if is_master_locked:
+                    print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                else:
+                    grid_dots.fill(0)
+                    comm.send_frame(grid_dots)
             elif key in (ord('h'), ord('H')):
-                heart = [
-                    [0,1,1,0,0,1,1,0],
-                    [1,1,1,1,1,1,1,1],
-                    [1,1,1,1,1,1,1,1],
-                    [0,1,1,1,1,1,1,0],
-                    [0,0,1,1,1,1,0,0],
-                    [0,0,0,1,1,0,0,0],
-                    [0,0,0,0,0,0,0,0],
-                    [0,0,0,0,0,0,0,0]
-                ]
-                grid_dots[:] = heart
-                comm.send_frame(grid_dots)
+                if is_master_locked:
+                    print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                else:
+                    heart = [
+                        [0,1,1,0,0,1,1,0],
+                        [1,1,1,1,1,1,1,1],
+                        [1,1,1,1,1,1,1,1],
+                        [0,1,1,1,1,1,1,0],
+                        [0,0,1,1,1,1,0,0],
+                        [0,0,0,1,1,0,0,0],
+                        [0,0,0,0,0,0,0,0],
+                        [0,0,0,0,0,0,0,0]
+                    ]
+                    grid_dots[:] = heart
+                    comm.send_frame(grid_dots)
             elif key in (ord('s'), ord('S')):
-                smile = [
-                    [0,0,1,1,1,1,0,0],
-                    [0,1,0,0,0,0,1,0],
-                    [1,0,1,0,0,1,0,1],
-                    [1,0,0,0,0,0,0,1],
-                    [1,0,1,0,0,1,0,1],
-                    [1,0,0,1,1,0,0,1],
-                    [0,1,0,0,0,0,1,0],
-                    [0,0,1,1,1,1,0,0]
-                ]
-                grid_dots[:] = smile
-                comm.send_frame(grid_dots)
+                if is_master_locked:
+                    print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                else:
+                    smile = [
+                        [0,0,1,1,1,1,0,0],
+                        [0,1,0,0,0,0,1,0],
+                        [1,0,1,0,0,1,0,1],
+                        [1,0,0,0,0,0,0,1],
+                        [1,0,1,0,0,1,0,1],
+                        [1,0,0,1,1,0,0,1],
+                        [0,1,0,0,0,0,1,0],
+                        [0,0,1,1,1,1,0,0]
+                    ]
+                    grid_dots[:] = smile
+                    comm.send_frame(grid_dots)
             elif key in (ord('t'), ord('T')):
                 comm.transpose = not comm.transpose
                 print(f"[KEYBOARD] Transpose (row <-> col): {'ON' if comm.transpose else 'OFF'}", flush=True)
