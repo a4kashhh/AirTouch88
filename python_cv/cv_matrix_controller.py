@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Project: AirTouch-88: Neural Matrix Controller & Hand Gesture Interface
+Project: Neural Matrix Controller & Hand Gesture Interface
 Script:  cv_matrix_controller.py
 
 Key Features:
@@ -16,7 +16,9 @@ Key Features:
      - Clearly marked, fixed interaction zone on the camera viewport.
      - 8x8 Alignment Subgrid overlay with Row (0-7) and Column (0-7) indices.
      - Live Fingertip Reticle snapping directly to grid cells with instant feedback.
-     - Visual Dwell Progress ring (0.35s hold) and Pinch-to-Click ripple effect.
+     - Configurable Touch Point Delay (Dwell: 0.50s, 0.75s, 1.00s) with single-fire
+       anti-bounce protection (won't re-toggle until finger leaves the dot).
+     - Visual Dwell Progress ring and Pinch-to-Click ripple effect.
      - Strict boundary isolation: movements outside the area never toggle dots.
      - AREA CONTROL: Toggle between [LOCKED] and [EDIT] mode. In EDIT mode,
        click & drag or resize the control area using your mouse, or use
@@ -270,7 +272,7 @@ CAM_VIEW_W = 600
 CAM_VIEW_H = 450
 
 # Dedicated Fixed Control Area ("Air-Pad") inside Camera View
-# Default: perfectly centered 360x360 box inside camera view
+# Default: centered 360x360 box inside camera view
 control_area = {
     'x': CAM_VIEW_X + (CAM_VIEW_W - 360) // 2,  # 145
     'y': CAM_VIEW_Y + (CAM_VIEW_H - 360) // 2,  # 110
@@ -289,7 +291,6 @@ RIGHT_PANEL_W = 610
 RIGHT_PANEL_H = 580
 
 # 8x8 Virtual Matrix Geometry (Centered inside right PCB card)
-# Grid total size: 7 * 40 = 280px. Card width = 565px.
 MATRIX_ORIGIN_X = 812
 MATRIX_ORIGIN_Y = 135
 DOT_SPACING = 40
@@ -320,15 +321,22 @@ BUTTONS = {
     'GREET':  (BTN_START_X + (BTN_W + BTN_GAP_X)*2,   BTN_ROW2_Y, BTN_W, BTN_H, "MSG: GREET", (55, 30, 75), (210, 120, 255))
 }
 
-# Area Customization Buttons (below Camera View)
+# Area Customization & Touch Delay Buttons (below Camera View)
 AREA_BTN_Y = CAM_VIEW_Y + CAM_VIEW_H + 15  # 530
 AREA_BTN_H = 32
 AREA_BUTTONS = {
-    'LOCK_TOGGLE': (CAM_VIEW_X + 10,  AREA_BTN_Y, 135, AREA_BTN_H),
-    'CENTER':      (CAM_VIEW_X + 160, AREA_BTN_Y, 110, AREA_BTN_H),
-    'CYCLE_SIZE':  (CAM_VIEW_X + 285, AREA_BTN_Y, 125, AREA_BTN_H),
-    'RESET':       (CAM_VIEW_X + 425, AREA_BTN_Y, 105, AREA_BTN_H)
+    'LOCK_TOGGLE': (CAM_VIEW_X + 5,   AREA_BTN_Y, 115, AREA_BTN_H),
+    'DELAY_CYCLE': (CAM_VIEW_X + 128, AREA_BTN_Y, 125, AREA_BTN_H),
+    'CYCLE_SIZE':  (CAM_VIEW_X + 261, AREA_BTN_Y, 115, AREA_BTN_H),
+    'CENTER':      (CAM_VIEW_X + 384, AREA_BTN_Y, 95,  AREA_BTN_H),
+    'RESET':       (CAM_VIEW_X + 487, AREA_BTN_Y, 85,  AREA_BTN_H)
 }
+
+# Touch Point Delay & Anti-Bounce Settings
+DWELL_PRESETS = [0.50, 0.75, 1.00]
+dwell_preset_idx = 1  # 0.75s default (comfortable, deliberate touch)
+dwell_trigger_time = DWELL_PRESETS[dwell_preset_idx]
+dwell_lockout_dot = None  # Prevents re-triggering the same dot until finger leaves
 
 # Mouse & Drag State
 mouse_pos = (-1, -1)
@@ -386,6 +394,7 @@ def on_mouse_event(event, x, y, flags, param):
     """Handles mouse interaction for virtual dots, sliders, presets, and area customization."""
     global mouse_pos, current_brightness, is_dragging_brightness
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
+    global dwell_preset_idx, dwell_trigger_time
 
     comm = param
     mouse_pos = (x, y)
@@ -402,6 +411,13 @@ def on_mouse_event(event, x, y, flags, param):
         if is_inside_rect(x, y, AREA_BUTTONS['LOCK_TOGGLE']):
             control_area['locked'] = not control_area['locked']
             print(f"[CONTROL AREA] Mode toggled: {'LOCKED' if control_area['locked'] else 'EDIT/CUSTOMIZE'}", flush=True)
+            return
+
+        # Delay Cycle Button (0.50s -> 0.75s -> 1.00s)
+        elif is_inside_rect(x, y, AREA_BUTTONS['DELAY_CYCLE']):
+            dwell_preset_idx = (dwell_preset_idx + 1) % len(DWELL_PRESETS)
+            dwell_trigger_time = DWELL_PRESETS[dwell_preset_idx]
+            print(f"[TOUCH DELAY] Touch point dwell delay set to {dwell_trigger_time:.2f}s", flush=True)
             return
 
         # Center Area
@@ -549,8 +565,8 @@ def draw_header_bar(canvas, ip, port, fps, gesture, serial_active):
     # Logo / Title
     cv2.circle(canvas, (24, 26), 7, (0, 255, 200), -1)
     cv2.circle(canvas, (24, 26), 11, (0, 200, 160), 1)
-    cv2.putText(canvas, "AIRTOUCH-88", (42, 32), cv2.FONT_HERSHEY_DUPLEX, 0.72, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(canvas, "| NEURAL MATRIX CONTROLLER", (210, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.52, (0, 220, 255), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "NEURAL MATRIX CONTROLLER", (42, 32), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(canvas, "| 8x8 GESTURE INTERFACE", (370, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 220, 255), 1, cv2.LINE_AA)
 
     # ESP32 Status Pill
     badge_x = 590
@@ -627,7 +643,7 @@ def draw_fixed_control_area(canvas, active_cell, dwell_progress=0.0, tip_px=None
 
     # 1. Base Border & Background Tint
     border_color = (0, 230, 255) if is_locked else (0, 165, 255)  # Cyan if locked, Orange if edit
-    title_text = "FIXED AIR-PAD [LOCKED]" if is_locked else "AIR-PAD [EDIT MODE: DRAG/RESIZE]"
+    title_text = f"FIXED AIR-PAD [LOCKED | {dwell_trigger_time:.2f}s]" if is_locked else "AIR-PAD [EDIT MODE: DRAG/RESIZE]"
 
     # Subtle translucent dark fill
     overlay = canvas.copy()
@@ -684,13 +700,15 @@ def draw_fixed_control_area(canvas, active_cell, dwell_progress=0.0, tip_px=None
         cv2.line(canvas, (tx - 16, ty), (tx + 16, ty), (0, 255, 255), 1)
         cv2.line(canvas, (tx, ty - 16), (tx, ty + 16), (0, 255, 255), 1)
 
-        # Dwell progress arc
+        # Dwell progress arc (Smoothly fills over dwell_trigger_time)
         if dwell_progress > 0.0:
             end_angle = int(dwell_progress * 360)
-            cv2.ellipse(canvas, (tx, ty), (18, 18), -90, 0, end_angle, (0, 255, 120), 3)
+            arc_color = (0, 255, 120) if dwell_progress < 1.0 else (0, 255, 255)
+            cv2.ellipse(canvas, (tx, ty), (18, 18), -90, 0, end_angle, arc_color, 3)
 
     # 5. Top Banner on Control Area
-    cv2.rectangle(canvas, (ax, ay - 24), (ax + 210, ay), border_color, -1)
+    banner_w = 230 if is_locked else 240
+    cv2.rectangle(canvas, (ax, ay - 24), (ax + banner_w, ay), border_color, -1)
     cv2.putText(canvas, title_text, (ax + 6, ay - 7),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.36, (15, 20, 30), 1, cv2.LINE_AA)
 
@@ -713,28 +731,34 @@ def draw_area_control_toolbar(canvas):
     lock_txt = "[ LOCKED ]" if is_locked else "[ EDIT AREA ]"
     cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), lock_bg, -1)
     cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), lock_border, 2)
-    cv2.putText(canvas, lock_txt, (bx + 14, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
+    cv2.putText(canvas, lock_txt, (bx + 12, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
-    # 2. Center Button
-    bx, by, bw, bh = AREA_BUTTONS['CENTER']
-    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (36, 42, 54), -1)
-    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (80, 95, 120), 1)
-    cv2.putText(canvas, "CENTER", (bx + 24, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 220, 240), 1, cv2.LINE_AA)
+    # 2. Touch Delay Cycle Button
+    bx, by, bw, bh = AREA_BUTTONS['DELAY_CYCLE']
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (30, 48, 65), -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (0, 200, 255), 1)
+    cv2.putText(canvas, f"HOLD: {dwell_trigger_time:.2f}s", (bx + 14, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.41, (0, 240, 255), 1, cv2.LINE_AA)
 
     # 3. Cycle Size Button
     bx, by, bw, bh = AREA_BUTTONS['CYCLE_SIZE']
     cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (36, 42, 54), -1)
     cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (80, 95, 120), 1)
-    cv2.putText(canvas, f"SIZE: {control_area['w']}px", (bx + 14, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 240), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"SIZE: {control_area['w']}px", (bx + 12, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 240), 1, cv2.LINE_AA)
 
-    # 4. Reset Button
+    # 4. Center Button
+    bx, by, bw, bh = AREA_BUTTONS['CENTER']
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (36, 42, 54), -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (80, 95, 120), 1)
+    cv2.putText(canvas, "CENTER", (bx + 16, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 220, 240), 1, cv2.LINE_AA)
+
+    # 5. Reset Button
     bx, by, bw, bh = AREA_BUTTONS['RESET']
     cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (50, 32, 38), -1)
     cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (120, 70, 80), 1)
-    cv2.putText(canvas, "RESET", (bx + 26, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (240, 180, 190), 1, cv2.LINE_AA)
+    cv2.putText(canvas, "RESET", (bx + 16, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (240, 180, 190), 1, cv2.LINE_AA)
 
     # Usage Note below toolbar
-    cv2.putText(canvas, "Fixed Control Area: Finger movement inside controls 64 dots. Outside movement is safely ignored.",
+    cv2.putText(canvas, f"Touch Point Delay: Hold finger for {dwell_trigger_time:.2f}s to toggle. Single-fire lock prevents repeat toggling.",
                 (CAM_VIEW_X + 5, by + bh + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 155, 175), 1, cv2.LINE_AA)
 
 
@@ -859,24 +883,24 @@ def draw_telemetry_bar(canvas, active_cell, last_cmd, cmd_status):
     cv2.rectangle(canvas, (0, bar_y), (CANVAS_W, bar_y + bar_h), (18, 20, 26), -1)
     cv2.line(canvas, (0, bar_y), (CANVAS_W, bar_y), (45, 55, 75), 1)
 
-    # Area status
-    area_status = f"AREA: {control_area['w']}x{control_area['h']} [{'LOCKED' if control_area['locked'] else 'EDIT'}]"
+    # Area status & touch delay
+    area_status = f"AREA: {control_area['w']}x{control_area['h']} [{'LOCKED' if control_area['locked'] else 'EDIT'}] | DELAY: {dwell_trigger_time:.2f}s"
     cv2.putText(canvas, area_status, (25, bar_y + 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
 
     # Active Target
     target_str = f"TARGET: Row {active_cell[0]}, Col {active_cell[1]} [Dot #{active_cell[0]*8 + active_cell[1] + 1}]" if active_cell else "TARGET: None (Out of area)"
     target_col = (0, 255, 120) if active_cell else (130, 140, 160)
-    cv2.putText(canvas, target_str, (320, bar_y + 30),
+    cv2.putText(canvas, target_str, (370, bar_y + 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, target_col, 1, cv2.LINE_AA)
 
     # Last Command & Comm Status
     comm_str = f"LAST TX: {last_cmd} | {cmd_status}"
-    cv2.putText(canvas, comm_str, (680, bar_y + 30),
+    cv2.putText(canvas, comm_str, (710, bar_y + 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 180, 60), 1, cv2.LINE_AA)
 
     # Shortcuts Tip
-    cv2.putText(canvas, "[Q] Quit  [C] Clear  [H] Heart  [L] Lock Area", (1030, bar_y + 30),
+    cv2.putText(canvas, "[Q] Quit  [C] Clear  [H] Heart  [D] Delay", (1030, bar_y + 30),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 160, 180), 1, cv2.LINE_AA)
 
 
@@ -886,25 +910,29 @@ def draw_telemetry_bar(canvas, active_cell, last_cmd, cmd_status):
 def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state
     global last_gesture_cmd_time, current_brightness, click_ripple_anim
+    global dwell_lockout_dot, dwell_preset_idx, dwell_trigger_time
 
-    parser = argparse.ArgumentParser(description="AirTouch-88: Neural Matrix Controller")
+    parser = argparse.ArgumentParser(description="Neural Matrix Controller: 8x8 Hand Gesture Interface")
     parser.add_argument("--ip", type=str, default="10.194.177.102", help="ESP32-C3 Wi-Fi IP address")
     parser.add_argument("--port", type=int, default=8888, help="ESP32-C3 UDP port (default: 8888)")
     parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index (default: 0)")
     parser.add_argument("--demo", action="store_true", help="Run in simulation mode")
     parser.add_argument("--fps", type=int, default=60, help="Target FPS limit (default: 60)")
+    parser.add_argument("--dwell", type=float, default=0.75, help="Touch point dwell delay in seconds (default: 0.75)")
     args = parser.parse_args()
 
     TARGET_FPS = float(args.fps)
     FRAME_INTERVAL = 1.0 / TARGET_FPS
+    dwell_trigger_time = float(args.dwell)
 
     print("\n" + "=" * 64, flush=True)
-    print("  AIRTOUCH-88: NEURAL MATRIX CONTROLLER", flush=True)
+    print("  NEURAL MATRIX CONTROLLER: 8x8 HAND GESTURE INTERFACE", flush=True)
     print(f"  Target ESP32-C3 IP:   {args.ip}:{args.port}", flush=True)
     if args.serial:
         print(f"  Serial Fallback:      {args.serial}", flush=True)
     print(f"  Target Frame Rate:    {int(TARGET_FPS)} FPS", flush=True)
+    print(f"  Touch Point Delay:    {dwell_trigger_time:.2f}s (single-fire anti-bounce active)", flush=True)
     print("  Dedicated Fixed Control Area: Active (isolated from accidental input)", flush=True)
     print("=" * 64 + "\n", flush=True)
 
@@ -925,7 +953,7 @@ def main():
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
 
-    WINDOW_NAME = "AirTouch-88: Neural Matrix Controller"
+    WINDOW_NAME = "Neural Matrix Controller"
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, CANVAS_W, CANVAS_H)
     cv2.setMouseCallback(WINDOW_NAME, on_mouse_event, comm)
@@ -961,7 +989,7 @@ def main():
             else:
                 # Demo simulation mode: animated hand pointer
                 frame_cam = np.full((CAM_VIEW_H, CAM_VIEW_W, 3), 26, dtype=np.uint8)
-                sim_angle += 0.04
+                sim_angle += 0.03
                 ax = control_area['x']
                 ay = control_area['y']
                 aw = control_area['w']
@@ -969,7 +997,7 @@ def main():
                 sim_x = int(ax + aw * 0.5 + (aw * 0.35) * math.sin(sim_angle))
                 sim_y = int(ay + ah * 0.5 + (ah * 0.30) * math.cos(sim_angle * 0.7))
                 tip_canvas = (sim_x, sim_y)
-                is_pinching = (int(sim_angle * 2) % 6 == 0)
+                is_pinching = (int(sim_angle * 2) % 8 == 0)
                 detected = True
                 gesture = "PINCH CLICK" if is_pinching else "POINTING"
 
@@ -998,38 +1026,48 @@ def main():
             now = time.time()
 
             # PINCH-TO-CLICK (Instant toggle inside Fixed Control Area)
-            if is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.40):
+            if is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.45):
                 if active_cell is not None:
                     r, c = active_cell
                     grid_dots[r, c] ^= 1
                     comm.send_toggle_dot(r, c)
                     last_air_click_time = now
+                    dwell_lockout_dot = active_cell  # Also lock out dwell on this dot
                     cx = MATRIX_ORIGIN_X + c * DOT_SPACING
                     cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
                     click_ripple_anim = (cx, cy, now)
                     print(f"[HAND PINCH] Toggled Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
 
-            # DWELL-TO-CLICK (Hold steady for 0.35s inside Fixed Control Area)
+            # DWELL-TO-CLICK (Hold steady for dwell_trigger_time inside Fixed Control Area)
             if active_cell is not None and not is_pinching:
                 if active_cell == dwell_dot:
-                    dwell_time = now - dwell_start_time
-                    dwell_progress = min(1.0, dwell_time / 0.35)
-                    if dwell_time >= 0.35 and (now - last_air_click_time >= 0.55):
-                        r, c = active_cell
-                        grid_dots[r, c] ^= 1
-                        comm.send_toggle_dot(r, c)
-                        last_air_click_time = now
-                        dwell_start_time = now + 0.4
-                        cx = MATRIX_ORIGIN_X + c * DOT_SPACING
-                        cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
-                        click_ripple_anim = (cx, cy, now)
-                        print(f"[HAND DWELL] Toggled Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
+                    if active_cell != dwell_lockout_dot:
+                        dwell_time = now - dwell_start_time
+                        dwell_progress = min(1.0, dwell_time / dwell_trigger_time)
+                        if dwell_time >= dwell_trigger_time and (now - last_air_click_time >= 0.50):
+                            r, c = active_cell
+                            grid_dots[r, c] ^= 1
+                            comm.send_toggle_dot(r, c)
+                            last_air_click_time = now
+                            dwell_lockout_dot = active_cell  # Single-fire: won't re-toggle until finger leaves dot!
+                            dwell_progress = 1.0
+                            cx = MATRIX_ORIGIN_X + c * DOT_SPACING
+                            cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
+                            click_ripple_anim = (cx, cy, now)
+                            print(f"[HAND DWELL] Toggled Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'} (Delay: {dwell_trigger_time:.2f}s)", flush=True)
+                    else:
+                        # Already toggled once while on this dot; waiting for user to leave
+                        dwell_progress = 0.0
                 else:
+                    # Moved to a new cell: reset dwell timer and clear lockout
                     dwell_dot = active_cell
                     dwell_start_time = now
+                    dwell_lockout_dot = None
                     dwell_progress = 0.0
             else:
                 dwell_dot = None
+                dwell_start_time = now
+                dwell_lockout_dot = None
                 dwell_progress = 0.0
 
             last_pinch_state = is_pinching
@@ -1087,6 +1125,10 @@ def main():
             elif key in (ord('l'), ord('L')):
                 control_area['locked'] = not control_area['locked']
                 print(f"[KEYBOARD] Area mode: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
+            elif key in (ord('d'), ord('D')):
+                dwell_preset_idx = (dwell_preset_idx + 1) % len(DWELL_PRESETS)
+                dwell_trigger_time = DWELL_PRESETS[dwell_preset_idx]
+                print(f"[KEYBOARD] Touch delay set to: {dwell_trigger_time:.2f}s", flush=True)
 
             # 7. Frame Rate Limiter
             proc_time = time.perf_counter() - frame_start_time
