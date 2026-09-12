@@ -60,9 +60,12 @@ def ensure_model_asset():
 # ==============================================================================
 class MatrixCommunicator:
     """Manages low-latency UDP packet transmission to the ESP32 matrix."""
-    def __init__(self, udp_ip="10.150.46.102", udp_port=8888, serial_port=None, baud_rate=115200):
+    def __init__(self, udp_ip="10.150.46.102", udp_port=8888, serial_port=None, baud_rate=115200,
+                 transpose=True, invert=True):
         self.udp_ip = udp_ip
         self.udp_port = udp_port
+        self.transpose = transpose
+        self.invert = invert
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setblocking(False)
 
@@ -109,14 +112,37 @@ class MatrixCommunicator:
             self.last_sent_brightness = brightness_val
             self.send_command(f"BRIGHTNESS:{brightness_val}")
 
-    def send_toggle_dot(self, r, c):
-        """Toggles dot at row r, col c on physical matrix."""
-        self.send_command(f"TOGGLE:{r},{c}")
+    def send_toggle_dot(self, r, c, grid=None):
+        """Toggles dot at row r, col c, sending complete frame to ensure sync."""
+        global grid_dots
+        target = grid if grid is not None else grid_dots
+        self.send_frame(target)
 
     def send_frame(self, grid):
-        """Sends complete 64-bit frame buffer to ESP32: FRAME:<64 bits>."""
-        bits = "".join(str(grid[r, c]) for r in range(8) for c in range(8))
-        self.send_command(f"FRAME:{bits}")
+        """
+        Sends complete 64-bit frame buffer to ESP32: FRAME:<64 bits>.
+        Applies row<->col transposition and polarity inversion as required.
+        """
+        # 1. Transpose if hardware rows/cols are swapped
+        if self.transpose:
+            dev_grid = grid.T
+        else:
+            dev_grid = grid
+
+        # 2. Build 64-bit bitstring with polarity correction
+        bits = []
+        for r in range(8):
+            for c in range(8):
+                val = dev_grid[r, c]
+                if self.invert:
+                    # Inverted: 1 (ON in UI) -> '0', 0 (OFF in UI) -> '1'
+                    bit_char = '0' if val else '1'
+                else:
+                    bit_char = '1' if val else '0'
+                bits.append(bit_char)
+
+        bit_str = "".join(bits)
+        self.send_command(f"FRAME:{bit_str}")
 
 
 # ==============================================================================
@@ -505,7 +531,7 @@ def on_mouse_event(event, x, y, flags, param):
             if is_inside_rect(x, y, (bx, by, bw, bh)):
                 if key == 'CLEAR':
                     grid_dots.fill(0)
-                    comm.send_command("CLEAR")
+                    comm.send_frame(grid_dots)
                 elif key == 'HEART':
                     heart = [
                         [0,1,1,0,0,1,1,0],
@@ -518,7 +544,7 @@ def on_mouse_event(event, x, y, flags, param):
                         [0,0,0,0,0,0,0,0]
                     ]
                     grid_dots[:] = heart
-                    comm.send_command("PATTERN:HEART")
+                    comm.send_frame(grid_dots)
                 elif key == 'SMILE':
                     smile = [
                         [0,0,1,1,1,1,0,0],
@@ -531,7 +557,7 @@ def on_mouse_event(event, x, y, flags, param):
                         [0,0,1,1,1,1,0,0]
                     ]
                     grid_dots[:] = smile
-                    comm.send_command("PATTERN:SMILE")
+                    comm.send_frame(grid_dots)
                 return
 
     elif event == cv2.EVENT_MOUSEMOVE:
@@ -564,7 +590,7 @@ def on_mouse_event(event, x, y, flags, param):
 # ==============================================================================
 # 8. RENDERING ENGINE
 # ==============================================================================
-def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, port, gesture, brightness_active):
+def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, port, gesture, brightness_active, transpose=True, invert=True):
     """Draws the clean widescreen UI: Camera View on Left, 8x8 Matrix on Right."""
     global click_ripple_anim
 
@@ -800,7 +826,9 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
     # 6. Bottom Footer
     cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
     target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
-    footer_text = f"Natural Aspect Ratio Camera  |  Hold Delay: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
+    t_status = "ON" if transpose else "OFF"
+    i_status = "ON" if invert else "OFF"
+    footer_text = f"ESP32: {ip}:{port}  |  Transpose: {t_status} [T]  |  Invert: {i_status} [I]  |  Hold: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.36, (115, 115, 122), 1, cv2.LINE_AA)
 
@@ -821,20 +849,29 @@ def main():
     parser.add_argument("--demo", action="store_true", help="Run in simulation mode")
     parser.add_argument("--fps", type=int, default=60, help="Target FPS")
     parser.add_argument("--dwell", type=float, default=0.75, help="Dwell delay in seconds")
+    parser.add_argument("--no-transpose", action="store_true", help="Disable row/col transposition")
+    parser.add_argument("--no-invert", action="store_true", help="Disable active-low polarity inversion")
     args = parser.parse_args()
 
     TARGET_FPS = float(args.fps)
     FRAME_INTERVAL = 1.0 / TARGET_FPS
     DWELL_TRIGGER_TIME = float(args.dwell)
+    transpose_init = not args.no_transpose
+    invert_init = not args.no_invert
 
     print("\n" + "=" * 60, flush=True)
-    print("  8x8 LED MATRIX CONTROLLER (ASPECT-CORRECT CAMERA VIEW)", flush=True)
+    print("  8x8 LED MATRIX CONTROLLER (HARDWARE-SYNCED & ASPECT-CORRECT)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
+    print(f"  Transpose [T]:      {'ON (row <-> col)' if transpose_init else 'OFF'}", flush=True)
+    print(f"  Invert Polarity [I]:{'ON (active-low fixed)' if invert_init else 'OFF'}", flush=True)
     print(f"  Hold Delay:         {DWELL_TRIGGER_TIME:.2f}s (single-fire anti-bounce)", flush=True)
-    print("  Camera View:        Aspect-ratio preserved (no horizontal squeeze)", flush=True)
     print("=" * 60 + "\n", flush=True)
 
-    comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial)
+    comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial,
+                              transpose=transpose_init, invert=invert_init)
+    # Sync initial blank state to ESP32
+    comm.send_frame(grid_dots)
+
     analyzer = HandGestureAnalyzer()
     jitter_filter = AntiJitterFilter(alpha=0.30)
     smoother = PointerSmoother(alpha=0.50)
@@ -991,12 +1028,13 @@ def main():
                         [0,0,0,0,0,0,0,0]
                     ]
                     grid_dots[:] = heart
-                    comm.send_command("PATTERN:HEART")
+                    comm.send_frame(grid_dots)
                     last_gesture_cmd_time = now
 
             # 5. Render Minimal UI (Aspect-Correct Camera Left, Matrix Right)
             render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress,
-                      comm.udp_ip, comm.udp_port, gesture, brightness_active)
+                      comm.udp_ip, comm.udp_port, gesture, brightness_active,
+                      transpose=comm.transpose, invert=comm.invert)
 
             # 6. Display Window
             cv2.imshow(WINDOW_NAME, canvas)
@@ -1007,7 +1045,7 @@ def main():
                 break
             elif key in (ord('c'), ord('C')):
                 grid_dots.fill(0)
-                comm.send_command("CLEAR")
+                comm.send_frame(grid_dots)
             elif key in (ord('h'), ord('H')):
                 heart = [
                     [0,1,1,0,0,1,1,0],
@@ -1020,7 +1058,7 @@ def main():
                     [0,0,0,0,0,0,0,0]
                 ]
                 grid_dots[:] = heart
-                comm.send_command("PATTERN:HEART")
+                comm.send_frame(grid_dots)
             elif key in (ord('s'), ord('S')):
                 smile = [
                     [0,0,1,1,1,1,0,0],
@@ -1033,7 +1071,15 @@ def main():
                     [0,0,1,1,1,1,0,0]
                 ]
                 grid_dots[:] = smile
-                comm.send_command("PATTERN:SMILE")
+                comm.send_frame(grid_dots)
+            elif key in (ord('t'), ord('T')):
+                comm.transpose = not comm.transpose
+                print(f"[KEYBOARD] Transpose (row <-> col): {'ON' if comm.transpose else 'OFF'}", flush=True)
+                comm.send_frame(grid_dots)
+            elif key in (ord('i'), ord('I')):
+                comm.invert = not comm.invert
+                print(f"[KEYBOARD] Invert Polarity: {'ON' if comm.invert else 'OFF'}", flush=True)
+                comm.send_frame(grid_dots)
             elif key in (ord('l'), ord('L')):
                 control_area['locked'] = not control_area['locked']
                 print(f"[KEYBOARD] Area: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
