@@ -521,14 +521,14 @@ HEART_SMALL = np.array([
     [0,0,0,0,0,0,0,0]
 ], dtype=np.uint8)
 
-font_mode = 'compact'
+font_mode = 'standard'  # Default to classic 5x7 (old size requested by user)
 
-def build_scrolling_columns(msg_str, font_type='compact'):
+def build_scrolling_columns(msg_str, font_type='standard'):
     """Generates column-wise bit data for right-to-left scrolling text."""
     cols = []
     cols.extend([0x00] * 8)  # 8 blank lead-in columns
-    font = FONT_3X5 if font_type == 'compact' else FONT_5X7
-    default_cols = [0x00, 0x00, 0x00] if font_type == 'compact' else [0x00, 0x00, 0x00, 0x00, 0x00]
+    font = FONT_5X7 if font_type == 'standard' else FONT_3X5
+    default_cols = [0x00, 0x00, 0x00, 0x00, 0x00] if font_type == 'standard' else [0x00, 0x00, 0x00]
     for ch in msg_str.upper():
         char_cols = font.get(ch, default_cols)
         cols.extend(char_cols)
@@ -550,11 +550,12 @@ def get_heartbeat_frame(now, start_time):
     is_large = (0.0 <= t < 0.14) or (0.22 <= t < 0.36)
     return (HEART_LARGE, True) if is_large else (HEART_SMALL, False)
 
-# Typography Bar Geometry (Above 8x8 Matrix) - Sleek & Compact
+# Typography Bar Geometry (Above 8x8 Matrix) - Input, Scroll Toggle, Speed Control
 TYPO_Y = 72
 TYPO_H = 24
-TYPO_INPUT_RECT = (SLIDER_X, TYPO_Y, 276, TYPO_H)
-TYPO_SCROLL_RECT = (SLIDER_X + 284, TYPO_Y, 94, TYPO_H)
+TYPO_INPUT_RECT = (SLIDER_X, TYPO_Y, 204, TYPO_H)
+TYPO_SCROLL_RECT = (SLIDER_X + 212, TYPO_Y, 86, TYPO_H)
+TYPO_SPEED_RECT = (SLIDER_X + 306, TYPO_Y, 72, TYPO_H)
 
 # Animation State Variables
 custom_message = "HELLO"
@@ -562,7 +563,8 @@ is_typing_mode = False
 is_scroll_active = False
 scroll_step = 0
 last_scroll_time = 0.0
-SCROLL_SPEED = 0.085  # 85ms per column
+scroll_speed_ms = 80  # Default 80ms per column
+SPEED_PRESETS = [40, 60, 80, 110, 150, 200]
 scroll_cols = []
 
 is_heartbeat_active = False
@@ -649,7 +651,7 @@ def on_mouse_event(event, x, y, flags, param):
     """Handles mouse click & drag for dots, slider, buttons, and area control."""
     global mouse_pos, current_brightness, is_dragging_brightness
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
-    global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time
+    global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
 
     comm = param
@@ -706,7 +708,7 @@ def on_mouse_event(event, x, y, flags, param):
                 drag_offset = (x - ax, y - ay)
                 return
 
-        # Typography Input & Scroll Buttons (above matrix)
+        # Typography Input, Scroll & Speed Buttons (above matrix)
         if is_inside_rect(x, y, TYPO_INPUT_RECT):
             if is_master_locked:
                 print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
@@ -730,6 +732,14 @@ def on_mouse_event(event, x, y, flags, param):
                 grid_dots.fill(0)
                 comm.send_frame(grid_dots)
                 print("[TYPOGRAPHY] Scrolling stopped", flush=True)
+            return
+
+        elif is_inside_rect(x, y, TYPO_SPEED_RECT):
+            if is_master_locked:
+                return
+            idx = (SPEED_PRESETS.index(scroll_speed_ms) + 1) % len(SPEED_PRESETS) if scroll_speed_ms in SPEED_PRESETS else 2
+            scroll_speed_ms = SPEED_PRESETS[idx]
+            print(f"[TYPOGRAPHY] Scroll Speed set to {scroll_speed_ms}ms per column", flush=True)
             return
 
         # 3. Direct click on matrix dot
@@ -910,6 +920,18 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
                   (TYPO_SCROLL_RECT[0] + TYPO_SCROLL_RECT[2], TYPO_SCROLL_RECT[1] + TYPO_SCROLL_RECT[3]), sc_border, 1, cv2.LINE_AA)
     cv2.putText(canvas, sc_text, (TYPO_SCROLL_RECT[0] + 10, TYPO_SCROLL_RECT[1] + 16),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.31, sc_col, 1, cv2.LINE_AA)
+
+    # Speed Toggle Button (Click to cycle speed)
+    sp_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], TYPO_SPEED_RECT)
+    sp_bg = (38, 38, 44) if sp_hover else (24, 24, 28)
+    sp_border = (110, 110, 120) if sp_hover else (45, 45, 52)
+    sp_text = f"{scroll_speed_ms}ms"
+    cv2.rectangle(canvas, (TYPO_SPEED_RECT[0], TYPO_SPEED_RECT[1]),
+                  (TYPO_SPEED_RECT[0] + TYPO_SPEED_RECT[2], TYPO_SPEED_RECT[1] + TYPO_SPEED_RECT[3]), sp_bg, -1)
+    cv2.rectangle(canvas, (TYPO_SPEED_RECT[0], TYPO_SPEED_RECT[1]),
+                  (TYPO_SPEED_RECT[0] + TYPO_SPEED_RECT[2], TYPO_SPEED_RECT[1] + TYPO_SPEED_RECT[3]), sp_border, 1, cv2.LINE_AA)
+    cv2.putText(canvas, sp_text, (TYPO_SPEED_RECT[0] + (TYPO_SPEED_RECT[2] - len(sp_text)*7)//2, TYPO_SPEED_RECT[1] + 16),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.31, (210, 210, 215), 1, cv2.LINE_AA)
 
     # 2. LEFT PANEL: Camera Feed Viewport (100% natural, un-squeezed)
     canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_cropped
@@ -1163,8 +1185,9 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
     target_text = f"Target: Dot ({active_dot[0]}, {active_dot[1]})" if active_dot else "Waiting for hand"
     lock_status = "LOCKED [SPACE]" if is_master_locked else "OFF [SPACE]"
     anim_status = "HEARTBEAT" if is_heartbeat_active else ("SCROLL" if is_scroll_active else "MANUAL")
+    speed_tag = f"Speed: {scroll_speed_ms}ms ([ / ])"
     font_tag = f"Font: {'3x5' if font_mode == 'compact' else '5x7'} [F]"
-    footer_text = f"Mode: {anim_status}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
+    footer_text = f"Mode: {anim_status}  |  {speed_tag}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.32, (105, 105, 112), 1, cv2.LINE_AA)
 
@@ -1176,7 +1199,7 @@ def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state
     global last_gesture_cmd_time, current_brightness, click_ripple_anim
     global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
-    global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time
+    global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time, scroll_speed_ms
     global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols, font_mode
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
@@ -1190,7 +1213,8 @@ def main():
     parser.add_argument("--no-transpose", action="store_true", help="Disable row/col transposition")
     parser.add_argument("--no-invert", action="store_true", help="Disable active-low polarity inversion")
     parser.add_argument("--msg", type=str, default="HELLO", help="Default scrolling message")
-    parser.add_argument("--font", type=str, default="compact", choices=["compact", "standard"], help="Font mode: compact (3x5) or standard (5x7)")
+    parser.add_argument("--speed", type=int, default=80, help="Scroll speed in ms per column (default: 80)")
+    parser.add_argument("--font", type=str, default="standard", choices=["compact", "standard"], help="Font mode: standard (5x7) or compact (3x5)")
     args = parser.parse_args()
 
     TARGET_FPS = float(args.fps)
@@ -1200,12 +1224,13 @@ def main():
     invert_init = not args.no_invert
     custom_message = args.msg.upper()
     font_mode = args.font
+    scroll_speed_ms = int(args.speed)
     scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
 
     print("\n" + "=" * 60, flush=True)
     print("  8x8 LED MATRIX CONTROLLER (TYPOGRAPHY & HEARTBEAT ANIMATIONS)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
-    print(f"  Message [M]:        '{custom_message}' ({'3x5 Compact' if font_mode == 'compact' else '5x7 Standard'}, [F] to toggle)", flush=True)
+    print(f"  Message [M/F]:      '{custom_message}' ({'Classic 5x7' if font_mode == 'standard' else 'Compact 3x5'}, Speed: {scroll_speed_ms}ms)", flush=True)
     print("  Heartbeat [H]:      Human physiological rhythm (~70 BPM lub-dub)", flush=True)
     print(f"  Transpose [T]:      {'ON (row <-> col)' if transpose_init else 'OFF'}", flush=True)
     print(f"  Invert Polarity [I]:{'ON (active-low fixed)' if invert_init else 'OFF'}", flush=True)
@@ -1381,7 +1406,7 @@ def main():
                     comm.send_frame(grid_dots)
 
             elif is_scroll_active and not is_master_locked:
-                if now - last_scroll_time >= SCROLL_SPEED:
+                if now - last_scroll_time >= (scroll_speed_ms / 1000.0):
                     last_scroll_time = now
                     max_steps = max(1, len(scroll_cols) - 7)
                     scroll_step = (scroll_step + 1) % max_steps
@@ -1495,6 +1520,12 @@ def main():
                         font_mode = 'standard' if font_mode == 'compact' else 'compact'
                         scroll_cols = build_scrolling_columns(custom_message, font_type=font_mode)
                         print(f"[KEYBOARD] Font Size: {'3x5 Compact' if font_mode == 'compact' else '5x7 Standard'}", flush=True)
+                    elif key in (ord(']'), ord('+'), ord('=')):
+                        scroll_speed_ms = max(20, scroll_speed_ms - 15)
+                        print(f"[TYPOGRAPHY] Faster Scroll: {scroll_speed_ms}ms per column", flush=True)
+                    elif key in (ord('['), ord('-'), ord('_')):
+                        scroll_speed_ms = min(300, scroll_speed_ms + 15)
+                        print(f"[TYPOGRAPHY] Slower Scroll: {scroll_speed_ms}ms per column", flush=True)
 
             # 8. FPS Limiter
             proc_time = time.perf_counter() - frame_start_time
