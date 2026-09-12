@@ -372,16 +372,147 @@ current_brightness = 75
 is_dragging_brightness = False
 is_hand_adjusting_brightness = False
 
-# Minimal Action Buttons
-BTN_W = 86
+# 5x7 Typography Font (ASCII 32 ' ' to 90 'Z')
+FONT_5X7 = {
+    ' ': [0x00, 0x00, 0x00, 0x00, 0x00],
+    '!': [0x00, 0x00, 0x5F, 0x00, 0x00],
+    '"': [0x00, 0x07, 0x00, 0x07, 0x00],
+    '#': [0x14, 0x7F, 0x14, 0x7F, 0x14],
+    '$': [0x24, 0x2A, 0x7F, 0x2A, 0x12],
+    '%': [0x23, 0x13, 0x08, 0x64, 0x62],
+    '&': [0x36, 0x49, 0x55, 0x22, 0x50],
+    "'": [0x00, 0x05, 0x03, 0x00, 0x00],
+    '(': [0x00, 0x1C, 0x22, 0x41, 0x00],
+    ')': [0x00, 0x41, 0x22, 0x1C, 0x00],
+    '*': [0x14, 0x08, 0x3E, 0x08, 0x14],
+    '+': [0x08, 0x08, 0x3E, 0x08, 0x08],
+    ',': [0x00, 0x50, 0x30, 0x00, 0x00],
+    '-': [0x08, 0x08, 0x08, 0x08, 0x08],
+    '.': [0x00, 0x60, 0x60, 0x00, 0x00],
+    '/': [0x20, 0x10, 0x08, 0x04, 0x02],
+    '0': [0x3E, 0x51, 0x49, 0x45, 0x3E],
+    '1': [0x00, 0x42, 0x7F, 0x40, 0x00],
+    '2': [0x42, 0x61, 0x51, 0x49, 0x46],
+    '3': [0x21, 0x41, 0x45, 0x4B, 0x31],
+    '4': [0x18, 0x14, 0x12, 0x7F, 0x10],
+    '5': [0x27, 0x45, 0x45, 0x45, 0x39],
+    '6': [0x3C, 0x4A, 0x49, 0x49, 0x30],
+    '7': [0x01, 0x71, 0x09, 0x05, 0x03],
+    '8': [0x36, 0x49, 0x49, 0x49, 0x36],
+    '9': [0x06, 0x49, 0x49, 0x29, 0x1E],
+    ':': [0x00, 0x36, 0x36, 0x00, 0x00],
+    ';': [0x00, 0x56, 0x36, 0x00, 0x00],
+    '<': [0x08, 0x14, 0x22, 0x41, 0x00],
+    '=': [0x14, 0x14, 0x14, 0x14, 0x14],
+    '>': [0x00, 0x41, 0x22, 0x14, 0x08],
+    '?': [0x02, 0x01, 0x51, 0x09, 0x06],
+    '@': [0x32, 0x49, 0x79, 0x41, 0x3E],
+    'A': [0x7E, 0x11, 0x11, 0x11, 0x7E],
+    'B': [0x7F, 0x49, 0x49, 0x49, 0x36],
+    'C': [0x3E, 0x41, 0x41, 0x41, 0x22],
+    'D': [0x7F, 0x41, 0x41, 0x22, 0x1C],
+    'E': [0x7F, 0x49, 0x49, 0x49, 0x41],
+    'F': [0x7F, 0x09, 0x09, 0x09, 0x01],
+    'G': [0x3E, 0x41, 0x49, 0x49, 0x7A],
+    'H': [0x7F, 0x08, 0x08, 0x08, 0x7F],
+    'I': [0x00, 0x41, 0x7F, 0x41, 0x00],
+    'J': [0x20, 0x40, 0x41, 0x3F, 0x01],
+    'K': [0x7F, 0x08, 0x14, 0x22, 0x41],
+    'L': [0x7F, 0x40, 0x40, 0x40, 0x40],
+    'M': [0x7F, 0x02, 0x0C, 0x02, 0x7F],
+    'N': [0x7F, 0x04, 0x08, 0x10, 0x7F],
+    'O': [0x3E, 0x41, 0x41, 0x41, 0x3E],
+    'P': [0x7F, 0x09, 0x09, 0x09, 0x06],
+    'Q': [0x3E, 0x41, 0x51, 0x21, 0x5E],
+    'R': [0x7F, 0x09, 0x19, 0x29, 0x46],
+    'S': [0x46, 0x49, 0x49, 0x49, 0x31],
+    'T': [0x01, 0x01, 0x7F, 0x01, 0x01],
+    'U': [0x3F, 0x40, 0x40, 0x40, 0x3F],
+    'V': [0x1F, 0x20, 0x40, 0x20, 0x1F],
+    'W': [0x3F, 0x40, 0x38, 0x40, 0x3F],
+    'X': [0x63, 0x14, 0x08, 0x14, 0x63],
+    'Y': [0x07, 0x08, 0x70, 0x08, 0x07],
+    'Z': [0x61, 0x51, 0x49, 0x45, 0x43]
+}
+
+# Heartbeat Animation Bitmaps (Human physiological cycle)
+HEART_LARGE = np.array([
+    [0,0,0,0,0,0,0,0],
+    [0,1,1,0,0,1,1,0],
+    [1,1,1,1,1,1,1,1],
+    [1,1,1,1,1,1,1,1],
+    [0,1,1,1,1,1,1,0],
+    [0,0,1,1,1,1,0,0],
+    [0,0,0,1,1,0,0,0],
+    [0,0,0,0,0,0,0,0]
+], dtype=np.uint8)
+
+HEART_SMALL = np.array([
+    [0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0],
+    [0,0,1,0,0,1,0,0],
+    [0,1,1,1,1,1,1,0],
+    [0,0,1,1,1,1,0,0],
+    [0,0,0,1,1,0,0,0],
+    [0,0,0,0,0,0,0,0],
+    [0,0,0,0,0,0,0,0]
+], dtype=np.uint8)
+
+def build_scrolling_columns(msg_str):
+    """Generates column-wise bit data for right-to-left scrolling text."""
+    cols = []
+    cols.extend([0x00] * 8)  # 8 blank lead-in columns
+    for ch in msg_str.upper():
+        char_cols = FONT_5X7.get(ch, [0x00, 0x00, 0x00, 0x00, 0x00])
+        cols.extend(char_cols)
+        cols.append(0x00)     # 1-column letter spacing
+    cols.extend([0x00] * 8)  # 8 blank trailing columns
+    return cols
+
+def get_heartbeat_frame(now, start_time):
+    """
+    Simulates human resting heartbeat (~70 BPM, 0.86s cycle).
+    Follows physiological 'Lub-Dub' double contraction rhythm:
+      - 0.00 to 0.14s: Systole Peak 1 (Large Heart)
+      - 0.14 to 0.22s: Brief Dip (Small Heart)
+      - 0.22 to 0.36s: Systole Peak 2 (Large Heart)
+      - 0.36 to 0.86s: Diastole Rest (Small Heart)
+    """
+    cycle = 0.86
+    t = (now - start_time) % cycle
+    is_large = (0.0 <= t < 0.14) or (0.22 <= t < 0.36)
+    return (HEART_LARGE, True) if is_large else (HEART_SMALL, False)
+
+# Typography Bar Geometry (Above 8x8 Matrix)
+TYPO_Y = 74
+TYPO_H = 34
+TYPO_INPUT_RECT = (SLIDER_X, TYPO_Y, 266, TYPO_H)
+TYPO_SCROLL_RECT = (SLIDER_X + 276, TYPO_Y, 102, TYPO_H)
+
+# Animation State Variables
+custom_message = "HELLO"
+is_typing_mode = False
+is_scroll_active = False
+scroll_step = 0
+last_scroll_time = 0.0
+SCROLL_SPEED = 0.085  # 85ms per column
+scroll_cols = []
+
+is_heartbeat_active = False
+heartbeat_start_time = 0.0
+last_heart_state = None
+
+# Minimal Action Buttons (5 buttons below slider)
+BTN_W = 68
 BTN_H = 34
-BTN_GAP = 11
+BTN_GAP = 9
 BTN_Y = 615
 BUTTONS = {
     'CLEAR': (SLIDER_X,                           BTN_Y, BTN_W, BTN_H, "Clear"),
     'HEART': (SLIDER_X + (BTN_W + BTN_GAP)*1,     BTN_Y, BTN_W, BTN_H, "Heart"),
-    'SMILE': (SLIDER_X + (BTN_W + BTN_GAP)*2,     BTN_Y, BTN_W, BTN_H, "Smile"),
-    'LOCK':  (SLIDER_X + (BTN_W + BTN_GAP)*3,     BTN_Y, BTN_W, BTN_H, "Lock")
+    'HELLO': (SLIDER_X + (BTN_W + BTN_GAP)*2,     BTN_Y, BTN_W, BTN_H, "Hello"),
+    'SMILE': (SLIDER_X + (BTN_W + BTN_GAP)*3,     BTN_Y, BTN_W, BTN_H, "Smile"),
+    'LOCK':  (SLIDER_X + (BTN_W + BTN_GAP)*4,     BTN_Y, BTN_W, BTN_H, "Lock")
 }
 is_master_locked = False
 
@@ -451,7 +582,8 @@ def on_mouse_event(event, x, y, flags, param):
     """Handles mouse click & drag for dots, slider, buttons, and area control."""
     global mouse_pos, current_brightness, is_dragging_brightness
     global is_dragging_area, is_resizing_area, drag_offset, click_ripple_anim
-    global is_master_locked
+    global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time
+    global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols
 
     comm = param
     mouse_pos = (x, y)
@@ -507,12 +639,40 @@ def on_mouse_event(event, x, y, flags, param):
                 drag_offset = (x - ax, y - ay)
                 return
 
+        # Typography Input & Scroll Buttons (above matrix)
+        if is_inside_rect(x, y, TYPO_INPUT_RECT):
+            if is_master_locked:
+                print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
+                return
+            is_typing_mode = not is_typing_mode
+            status = "ACTIVE - Type and press ENTER to scroll" if is_typing_mode else "CLOSED"
+            print(f"[TYPOGRAPHY] Edit Mode: {status} (Current: '{custom_message}')", flush=True)
+            return
+
+        elif is_inside_rect(x, y, TYPO_SCROLL_RECT):
+            if is_master_locked:
+                return
+            is_scroll_active = not is_scroll_active
+            if is_scroll_active:
+                is_heartbeat_active = False
+                scroll_cols = build_scrolling_columns(custom_message)
+                scroll_step = 0
+                last_scroll_time = time.time()
+                print(f"[TYPOGRAPHY] Scrolling started: '{custom_message}'", flush=True)
+            else:
+                grid_dots.fill(0)
+                comm.send_frame(grid_dots)
+                print("[TYPOGRAPHY] Scrolling stopped", flush=True)
+            return
+
         # 3. Direct click on matrix dot
         dot = get_dot_at_xy(x, y)
         if dot is not None:
             if is_master_locked:
                 print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
                 return
+            is_heartbeat_active = False
+            is_scroll_active = False
             r, c = dot
             grid_dots[r, c] ^= 1
             comm.send_toggle_dot(r, c)
@@ -546,22 +706,33 @@ def on_mouse_event(event, x, y, flags, param):
                     print("[LOCK] System is LOCKED. Click [LOCKED] or press SPACE to unlock.", flush=True)
                     return
                 if key == 'CLEAR':
+                    is_heartbeat_active = False
+                    is_scroll_active = False
                     grid_dots.fill(0)
                     comm.send_frame(grid_dots)
+                    print("[MATRIX] Cleared", flush=True)
                 elif key == 'HEART':
-                    heart = [
-                        [0,1,1,0,0,1,1,0],
-                        [1,1,1,1,1,1,1,1],
-                        [1,1,1,1,1,1,1,1],
-                        [0,1,1,1,1,1,1,0],
-                        [0,0,1,1,1,1,0,0],
-                        [0,0,0,1,1,0,0,0],
-                        [0,0,0,0,0,0,0,0],
-                        [0,0,0,0,0,0,0,0]
-                    ]
-                    grid_dots[:] = heart
-                    comm.send_frame(grid_dots)
+                    is_heartbeat_active = not is_heartbeat_active
+                    is_scroll_active = False
+                    if is_heartbeat_active:
+                        heartbeat_start_time = time.time()
+                        last_heart_state = None
+                        print("[ANIMATION] Human Heartbeat mode ACTIVE (~70 BPM lub-dub)", flush=True)
+                    else:
+                        grid_dots.fill(0)
+                        comm.send_frame(grid_dots)
+                        print("[ANIMATION] Heartbeat stopped", flush=True)
+                elif key == 'HELLO':
+                    custom_message = "HELLO"
+                    scroll_cols = build_scrolling_columns("HELLO")
+                    scroll_step = 0
+                    is_scroll_active = True
+                    is_heartbeat_active = False
+                    last_scroll_time = time.time()
+                    print("[TYPOGRAPHY] Scrolling preset 'HELLO' right-to-left", flush=True)
                 elif key == 'SMILE':
+                    is_heartbeat_active = False
+                    is_scroll_active = False
                     smile = [
                         [0,0,1,1,1,1,0,0],
                         [0,1,0,0,0,0,1,0],
@@ -574,6 +745,7 @@ def on_mouse_event(event, x, y, flags, param):
                     ]
                     grid_dots[:] = smile
                     comm.send_frame(grid_dots)
+                    print("[MATRIX] Smile pattern displayed", flush=True)
                 return
 
     elif event == cv2.EVENT_MOUSEMOVE:
@@ -630,6 +802,47 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
     # Subtle divider line
     cv2.line(canvas, (CAM_X, 60), (WINDOW_W - CAM_X, 60), (36, 36, 40), 1)
+
+    # Typography Bar (Above 8x8 Matrix)
+    in_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], TYPO_INPUT_RECT)
+    if is_typing_mode:
+        in_bg = (30, 42, 58)
+        in_border = (0, 200, 255)
+        cursor = "_" if int(time.time() * 2.5) % 2 == 0 else " "
+        in_text = f"Type: {custom_message}{cursor}"
+        txt_col = (0, 230, 255)
+    else:
+        in_bg = (32, 32, 38) if in_hover else (24, 24, 28)
+        in_border = (90, 90, 100) if in_hover else (45, 45, 52)
+        in_text = f'Msg: "{custom_message}" [M to edit]'
+        txt_col = (200, 200, 210)
+
+    cv2.rectangle(canvas, (TYPO_INPUT_RECT[0], TYPO_INPUT_RECT[1]),
+                  (TYPO_INPUT_RECT[0] + TYPO_INPUT_RECT[2], TYPO_INPUT_RECT[1] + TYPO_INPUT_RECT[3]), in_bg, -1)
+    cv2.rectangle(canvas, (TYPO_INPUT_RECT[0], TYPO_INPUT_RECT[1]),
+                  (TYPO_INPUT_RECT[0] + TYPO_INPUT_RECT[2], TYPO_INPUT_RECT[1] + TYPO_INPUT_RECT[3]), in_border, 1, cv2.LINE_AA)
+    cv2.putText(canvas, in_text, (TYPO_INPUT_RECT[0] + 10, TYPO_INPUT_RECT[1] + 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.38, txt_col, 1, cv2.LINE_AA)
+
+    # Scroll Toggle Button
+    sc_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], TYPO_SCROLL_RECT)
+    if is_scroll_active:
+        sc_bg = (18, 55, 65) if sc_hover else (12, 45, 55)
+        sc_border = (0, 230, 200)
+        sc_text = "SCROLL: ON"
+        sc_col = (0, 255, 220)
+    else:
+        sc_bg = (34, 34, 40) if sc_hover else (24, 24, 28)
+        sc_border = (90, 90, 100) if sc_hover else (45, 45, 52)
+        sc_text = "Scroll: OFF"
+        sc_col = (180, 180, 185)
+
+    cv2.rectangle(canvas, (TYPO_SCROLL_RECT[0], TYPO_SCROLL_RECT[1]),
+                  (TYPO_SCROLL_RECT[0] + TYPO_SCROLL_RECT[2], TYPO_SCROLL_RECT[1] + TYPO_SCROLL_RECT[3]), sc_bg, -1)
+    cv2.rectangle(canvas, (TYPO_SCROLL_RECT[0], TYPO_SCROLL_RECT[1]),
+                  (TYPO_SCROLL_RECT[0] + TYPO_SCROLL_RECT[2], TYPO_SCROLL_RECT[1] + TYPO_SCROLL_RECT[3]), sc_border, 1, cv2.LINE_AA)
+    cv2.putText(canvas, sc_text, (TYPO_SCROLL_RECT[0] + 12, TYPO_SCROLL_RECT[1] + 22),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.36, sc_col, 1, cv2.LINE_AA)
 
     # 2. LEFT PANEL: Camera Feed Viewport (100% natural, un-squeezed)
     canvas[CAM_Y:CAM_Y + CAM_H, CAM_X:CAM_X + CAM_W] = cam_cropped
@@ -834,7 +1047,7 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
     # Knob
     cv2.circle(canvas, (SLIDER_X + fill_w, SLIDER_Y + SLIDER_H // 2), 6, (255, 255, 255), -1)
 
-    # 5. Minimal Action Buttons (Clear, Heart, Smile, Lock)
+    # 5. Minimal Action Buttons (Clear, Heart, Hello, Smile, Lock)
     for key, (bx, by, bw, bh, label) in BUTTONS.items():
         is_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], (bx, by, bw, bh))
         if key == 'LOCK':
@@ -847,6 +1060,26 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
                 bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
                 border_col = (110, 110, 120) if is_hover else (55, 55, 62)
                 text_col = (220, 220, 225)
+        elif key == 'HEART':
+            display_label = "BEAT" if is_heartbeat_active else "Heart"
+            if is_heartbeat_active:
+                bg_col = (25, 25, 115) if is_hover else (20, 20, 95)
+                border_col = (60, 90, 255)
+                text_col = (180, 210, 255)
+            else:
+                bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
+                border_col = (110, 110, 120) if is_hover else (55, 55, 62)
+                text_col = (220, 220, 225)
+        elif key == 'HELLO':
+            display_label = "Hello"
+            if is_scroll_active and custom_message == "HELLO":
+                bg_col = (18, 55, 65) if is_hover else (12, 45, 55)
+                border_col = (0, 230, 200)
+                text_col = (0, 255, 220)
+            else:
+                bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
+                border_col = (110, 110, 120) if is_hover else (55, 55, 62)
+                text_col = (220, 220, 225)
         else:
             display_label = label
             bg_col = (38, 38, 44) if is_hover else (28, 28, 32)
@@ -855,8 +1088,8 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg_col, -1)
         cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border_col, 1, cv2.LINE_AA)
-        cv2.putText(canvas, display_label, (bx + (bw - len(display_label)*8)//2, by + 21),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.40, text_col, 1, cv2.LINE_AA)
+        cv2.putText(canvas, display_label, (bx + (bw - len(display_label)*7)//2, by + 21),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, text_col, 1, cv2.LINE_AA)
 
     # 6. Bottom Footer
     cv2.line(canvas, (CAM_X, 672), (WINDOW_W - CAM_X, 672), (32, 32, 36), 1)
@@ -864,9 +1097,10 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
     t_status = "ON" if transpose else "OFF"
     i_status = "ON" if invert else "OFF"
     lock_status = "LOCKED [SPACE]" if is_master_locked else "OFF [SPACE]"
-    footer_text = f"Lock: {lock_status}  |  Transpose: {t_status} [T]  |  Invert: {i_status} [I]  |  Hold: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
+    anim_status = "HEARTBEAT" if is_heartbeat_active else ("SCROLL" if is_scroll_active else "MANUAL")
+    footer_text = f"Mode: {anim_status}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  Hold: {DWELL_TRIGGER_TIME:.2f}s  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.36, (115, 115, 122), 1, cv2.LINE_AA)
+                cv2.FONT_HERSHEY_SIMPLEX, 0.35, (115, 115, 122), 1, cv2.LINE_AA)
 
 
 # ==============================================================================
@@ -876,7 +1110,8 @@ def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state
     global last_gesture_cmd_time, current_brightness, click_ripple_anim
     global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
-    global is_master_locked
+    global is_master_locked, is_typing_mode, is_scroll_active, scroll_step, last_scroll_time
+    global is_heartbeat_active, heartbeat_start_time, last_heart_state, custom_message, scroll_cols
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
     parser.add_argument("--ip", type=str, default="10.150.46.102", help="ESP32 IP address")
@@ -888,6 +1123,7 @@ def main():
     parser.add_argument("--dwell", type=float, default=0.75, help="Dwell delay in seconds")
     parser.add_argument("--no-transpose", action="store_true", help="Disable row/col transposition")
     parser.add_argument("--no-invert", action="store_true", help="Disable active-low polarity inversion")
+    parser.add_argument("--msg", type=str, default="HELLO", help="Default scrolling message")
     args = parser.parse_args()
 
     TARGET_FPS = float(args.fps)
@@ -895,13 +1131,16 @@ def main():
     DWELL_TRIGGER_TIME = float(args.dwell)
     transpose_init = not args.no_transpose
     invert_init = not args.no_invert
+    custom_message = args.msg.upper()
+    scroll_cols = build_scrolling_columns(custom_message)
 
     print("\n" + "=" * 60, flush=True)
-    print("  8x8 LED MATRIX CONTROLLER (HARDWARE-SYNCED & ASPECT-CORRECT)", flush=True)
+    print("  8x8 LED MATRIX CONTROLLER (TYPOGRAPHY & HEARTBEAT ANIMATIONS)", flush=True)
     print(f"  Target ESP32:       {args.ip}:{args.port}", flush=True)
+    print(f"  Message [M]:        '{custom_message}' (Right-to-Left Scroll)", flush=True)
+    print("  Heartbeat [H]:      Human physiological rhythm (~70 BPM lub-dub)", flush=True)
     print(f"  Transpose [T]:      {'ON (row <-> col)' if transpose_init else 'OFF'}", flush=True)
     print(f"  Invert Polarity [I]:{'ON (active-low fixed)' if invert_init else 'OFF'}", flush=True)
-    print(f"  Hold Delay:         {DWELL_TRIGGER_TIME:.2f}s (single-fire anti-bounce)", flush=True)
     print("=" * 60 + "\n", flush=True)
 
     comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial,
@@ -1009,6 +1248,8 @@ def main():
             # PINCH-TO-CLICK (Instant toggle inside Fixed Box)
             if not is_master_locked and is_pinching and not last_pinch_state and (now - last_air_click_time >= 0.45):
                 if active_dot is not None:
+                    is_heartbeat_active = False
+                    is_scroll_active = False
                     r, c = active_dot
                     grid_dots[r, c] ^= 1
                     comm.send_toggle_dot(r, c)
@@ -1026,6 +1267,8 @@ def main():
                         dwell_time = now - dwell_start_time
                         dwell_progress = min(1.0, dwell_time / DWELL_TRIGGER_TIME)
                         if dwell_time >= DWELL_TRIGGER_TIME and (now - last_air_click_time >= 0.50):
+                            is_heartbeat_active = False
+                            is_scroll_active = False
                             r, c = active_dot
                             grid_dots[r, c] ^= 1
                             comm.send_toggle_dot(r, c)
@@ -1054,19 +1297,32 @@ def main():
             # Quick gestures when hand is outside the active dots
             if not is_master_locked and active_dot is None and not brightness_active and (now - last_gesture_cmd_time >= 2.5):
                 if gesture == "PALM":
-                    heart = [
-                        [0,1,1,0,0,1,1,0],
-                        [1,1,1,1,1,1,1,1],
-                        [1,1,1,1,1,1,1,1],
-                        [0,1,1,1,1,1,1,0],
-                        [0,0,1,1,1,1,0,0],
-                        [0,0,0,1,1,0,0,0],
-                        [0,0,0,0,0,0,0,0],
-                        [0,0,0,0,0,0,0,0]
-                    ]
-                    grid_dots[:] = heart
-                    comm.send_frame(grid_dots)
+                    is_heartbeat_active = True
+                    is_scroll_active = False
+                    heartbeat_start_time = now
+                    last_heart_state = None
                     last_gesture_cmd_time = now
+                    print("[GESTURE] PALM detected -> Beating Heart activated (~70 BPM)", flush=True)
+
+            # 4.5. Dynamic Animations (Heartbeat & Right-to-Left Typography Scrolling)
+            if is_heartbeat_active and not is_master_locked:
+                hb_frame, hb_state = get_heartbeat_frame(now, heartbeat_start_time)
+                if hb_state != last_heart_state:
+                    last_heart_state = hb_state
+                    grid_dots[:] = hb_frame
+                    comm.send_frame(grid_dots)
+
+            elif is_scroll_active and not is_master_locked:
+                if now - last_scroll_time >= SCROLL_SPEED:
+                    last_scroll_time = now
+                    max_steps = max(1, len(scroll_cols) - 7)
+                    scroll_step = (scroll_step + 1) % max_steps
+                    window = scroll_cols[scroll_step : scroll_step + 8]
+                    for c_idx in range(8):
+                        col_byte = window[c_idx] if c_idx < len(window) else 0x00
+                        for r_idx in range(8):
+                            grid_dots[r_idx, c_idx] = (col_byte >> r_idx) & 1
+                    comm.send_frame(grid_dots)
 
             # 5. Render Minimal UI (Aspect-Correct Camera Left, Matrix Right)
             render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress,
@@ -1076,63 +1332,97 @@ def main():
             # 6. Display Window
             cv2.imshow(WINDOW_NAME, canvas)
 
-            # 7. Keyboard Shortcuts
-            key = cv2.waitKey(1) & 0xFF
-            if key in (ord('q'), ord('Q'), 27):
-                break
-            elif key == ord(' '):
-                is_master_locked = not is_master_locked
-                status_str = "LOCKED (No changes allowed)" if is_master_locked else "UNLOCKED"
-                print(f"[LOCK] Master Lock: {status_str}", flush=True)
-            elif key in (ord('c'), ord('C')):
-                if is_master_locked:
-                    print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+            # 7. Keyboard Shortcuts & Typography Input
+            raw_key = cv2.waitKey(1)
+            key = raw_key & 0xFF if raw_key != -1 else -1
+
+            if key != -1:
+                if is_typing_mode:
+                    if key in (13, 10):  # ENTER key - confirm and scroll
+                        is_typing_mode = False
+                        is_scroll_active = True
+                        is_heartbeat_active = False
+                        scroll_cols = build_scrolling_columns(custom_message)
+                        scroll_step = 0
+                        last_scroll_time = time.time()
+                        print(f"[TYPOGRAPHY] Message updated & scrolling: '{custom_message}'", flush=True)
+                    elif key == 27:  # ESC key - cancel typing
+                        is_typing_mode = False
+                        print("[TYPOGRAPHY] Typing mode closed.", flush=True)
+                    elif key in (8, 127):  # Backspace
+                        if len(custom_message) > 0:
+                            custom_message = custom_message[:-1]
+                            scroll_cols = build_scrolling_columns(custom_message)
+                    elif 32 <= key <= 126:  # Printable ASCII
+                        if len(custom_message) < 24:
+                            custom_message += chr(key).upper()
+                            scroll_cols = build_scrolling_columns(custom_message)
                 else:
-                    grid_dots.fill(0)
-                    comm.send_frame(grid_dots)
-            elif key in (ord('h'), ord('H')):
-                if is_master_locked:
-                    print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
-                else:
-                    heart = [
-                        [0,1,1,0,0,1,1,0],
-                        [1,1,1,1,1,1,1,1],
-                        [1,1,1,1,1,1,1,1],
-                        [0,1,1,1,1,1,1,0],
-                        [0,0,1,1,1,1,0,0],
-                        [0,0,0,1,1,0,0,0],
-                        [0,0,0,0,0,0,0,0],
-                        [0,0,0,0,0,0,0,0]
-                    ]
-                    grid_dots[:] = heart
-                    comm.send_frame(grid_dots)
-            elif key in (ord('s'), ord('S')):
-                if is_master_locked:
-                    print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
-                else:
-                    smile = [
-                        [0,0,1,1,1,1,0,0],
-                        [0,1,0,0,0,0,1,0],
-                        [1,0,1,0,0,1,0,1],
-                        [1,0,0,0,0,0,0,1],
-                        [1,0,1,0,0,1,0,1],
-                        [1,0,0,1,1,0,0,1],
-                        [0,1,0,0,0,0,1,0],
-                        [0,0,1,1,1,1,0,0]
-                    ]
-                    grid_dots[:] = smile
-                    comm.send_frame(grid_dots)
-            elif key in (ord('t'), ord('T')):
-                comm.transpose = not comm.transpose
-                print(f"[KEYBOARD] Transpose (row <-> col): {'ON' if comm.transpose else 'OFF'}", flush=True)
-                comm.send_frame(grid_dots)
-            elif key in (ord('i'), ord('I')):
-                comm.invert = not comm.invert
-                print(f"[KEYBOARD] Invert Polarity: {'ON' if comm.invert else 'OFF'}", flush=True)
-                comm.send_frame(grid_dots)
-            elif key in (ord('l'), ord('L')):
-                control_area['locked'] = not control_area['locked']
-                print(f"[KEYBOARD] Area: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
+                    if key in (ord('q'), ord('Q'), 27):
+                        break
+                    elif key == ord(' '):
+                        is_master_locked = not is_master_locked
+                        status_str = "LOCKED (No changes allowed)" if is_master_locked else "UNLOCKED"
+                        print(f"[LOCK] Master Lock: {status_str}", flush=True)
+                    elif key in (ord('m'), ord('M')):
+                        if is_master_locked:
+                            print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                        else:
+                            is_typing_mode = True
+                            print(f"[TYPOGRAPHY] Edit Mode: ACTIVE - Type message and press ENTER (Current: '{custom_message}')", flush=True)
+                    elif key in (ord('h'), ord('H')):
+                        if is_master_locked:
+                            print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                        else:
+                            is_heartbeat_active = not is_heartbeat_active
+                            is_scroll_active = False
+                            if is_heartbeat_active:
+                                heartbeat_start_time = time.time()
+                                last_heart_state = None
+                                print("[ANIMATION] Human Heartbeat mode ACTIVE (~70 BPM lub-dub)", flush=True)
+                            else:
+                                grid_dots.fill(0)
+                                comm.send_frame(grid_dots)
+                                print("[ANIMATION] Heartbeat stopped", flush=True)
+                    elif key in (ord('c'), ord('C')):
+                        if is_master_locked:
+                            print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                        else:
+                            is_heartbeat_active = False
+                            is_scroll_active = False
+                            grid_dots.fill(0)
+                            comm.send_frame(grid_dots)
+                            print("[MATRIX] Cleared", flush=True)
+                    elif key in (ord('s'), ord('S')):
+                        if is_master_locked:
+                            print("[LOCK] System is LOCKED. Press SPACE or click [LOCKED] to unlock.", flush=True)
+                        else:
+                            is_heartbeat_active = False
+                            is_scroll_active = False
+                            smile = [
+                                [0,0,1,1,1,1,0,0],
+                                [0,1,0,0,0,0,1,0],
+                                [1,0,1,0,0,1,0,1],
+                                [1,0,0,0,0,0,0,1],
+                                [1,0,1,0,0,1,0,1],
+                                [1,0,0,1,1,0,0,1],
+                                [0,1,0,0,0,0,1,0],
+                                [0,0,1,1,1,1,0,0]
+                            ]
+                            grid_dots[:] = smile
+                            comm.send_frame(grid_dots)
+                            print("[MATRIX] Smile pattern displayed", flush=True)
+                    elif key in (ord('t'), ord('T')):
+                        comm.transpose = not comm.transpose
+                        print(f"[KEYBOARD] Transpose (row <-> col): {'ON' if comm.transpose else 'OFF'}", flush=True)
+                        comm.send_frame(grid_dots)
+                    elif key in (ord('i'), ord('I')):
+                        comm.invert = not comm.invert
+                        print(f"[KEYBOARD] Invert Polarity: {'ON' if comm.invert else 'OFF'}", flush=True)
+                        comm.send_frame(grid_dots)
+                    elif key in (ord('l'), ord('L')):
+                        control_area['locked'] = not control_area['locked']
+                        print(f"[KEYBOARD] Area: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
 
             # 8. FPS Limiter
             proc_time = time.perf_counter() - frame_start_time
