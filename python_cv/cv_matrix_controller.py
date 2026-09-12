@@ -1577,6 +1577,7 @@ def render_ui(canvas, cam_cropped, tip_canvas, active_dot, dwell_progress, ip, p
 
     speed_tag = f"Sens: {audio_viz.sensitivity:.1f}x ([ / ])" if is_music_active else f"Speed: {scroll_speed_ms}ms ([ / ])"
     fps_tag = f"FPS: {target_fps}Hz [P]"
+    font_tag = f"Font: {'3x5' if font_mode == 'compact' else '5x7'} [F]"
     air_tag = f"Air: {air_mode} [G]"
     footer_text = f"Mode: {anim_status}  |  {air_tag}  |  {fps_tag}  |  {speed_tag}  |  {font_tag}  |  Msg: '{custom_message}'  |  Lock: {lock_status}  |  {target_text}"
     cv2.putText(canvas, footer_text, (CAM_X, 696),
