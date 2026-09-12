@@ -60,7 +60,7 @@ def ensure_model_asset():
 # ==============================================================================
 class MatrixCommunicator:
     """Manages low-latency UDP packet transmission to the ESP32 matrix."""
-    def __init__(self, udp_ip="10.194.177.102", udp_port=8888, serial_port=None, baud_rate=115200):
+    def __init__(self, udp_ip="10.150.46.102", udp_port=8888, serial_port=None, baud_rate=115200):
         self.udp_ip = udp_ip
         self.udp_port = udp_port
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -112,6 +112,11 @@ class MatrixCommunicator:
     def send_toggle_dot(self, r, c):
         """Toggles dot at row r, col c on physical matrix."""
         self.send_command(f"TOGGLE:{r},{c}")
+
+    def send_frame(self, grid):
+        """Sends complete 64-bit frame buffer to ESP32: FRAME:<64 bits>."""
+        bits = "".join(str(grid[r, c]) for r in range(8) for c in range(8))
+        self.send_command(f"FRAME:{bits}")
 
 
 # ==============================================================================
@@ -500,7 +505,7 @@ def on_mouse_event(event, x, y, flags, param):
             if is_inside_rect(x, y, (bx, by, bw, bh)):
                 if key == 'CLEAR':
                     grid_dots.fill(0)
-                    comm.send_command("PATTERN:CLEAR")
+                    comm.send_command("CLEAR")
                 elif key == 'HEART':
                     heart = [
                         [0,1,1,0,0,1,1,0],
@@ -809,7 +814,7 @@ def main():
     global dwell_lockout_dot, DWELL_TRIGGER_TIME, is_hand_adjusting_brightness
 
     parser = argparse.ArgumentParser(description="Minimal 8x8 LED Matrix Controller")
-    parser.add_argument("--ip", type=str, default="10.194.177.102", help="ESP32 IP address")
+    parser.add_argument("--ip", type=str, default="10.150.46.102", help="ESP32 IP address")
     parser.add_argument("--port", type=int, default=8888, help="ESP32 UDP port")
     parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port")
     parser.add_argument("--camera", type=int, default=0, help="Webcam device index")
@@ -1002,10 +1007,32 @@ def main():
                 break
             elif key in (ord('c'), ord('C')):
                 grid_dots.fill(0)
-                comm.send_command("PATTERN:CLEAR")
+                comm.send_command("CLEAR")
             elif key in (ord('h'), ord('H')):
+                heart = [
+                    [0,1,1,0,0,1,1,0],
+                    [1,1,1,1,1,1,1,1],
+                    [1,1,1,1,1,1,1,1],
+                    [0,1,1,1,1,1,1,0],
+                    [0,0,1,1,1,1,0,0],
+                    [0,0,0,1,1,0,0,0],
+                    [0,0,0,0,0,0,0,0],
+                    [0,0,0,0,0,0,0,0]
+                ]
+                grid_dots[:] = heart
                 comm.send_command("PATTERN:HEART")
             elif key in (ord('s'), ord('S')):
+                smile = [
+                    [0,0,1,1,1,1,0,0],
+                    [0,1,0,0,0,0,1,0],
+                    [1,0,1,0,0,1,0,1],
+                    [1,0,0,0,0,0,0,1],
+                    [1,0,1,0,0,1,0,1],
+                    [1,0,0,1,1,0,0,1],
+                    [0,1,0,0,0,0,1,0],
+                    [0,0,1,1,1,1,0,0]
+                ]
+                grid_dots[:] = smile
                 comm.send_command("PATTERN:SMILE")
             elif key in (ord('l'), ord('L')):
                 control_area['locked'] = not control_area['locked']
