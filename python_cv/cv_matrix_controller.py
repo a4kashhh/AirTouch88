@@ -307,7 +307,7 @@ class HandGestureAnalyzer:
             elif index_ext and middle_ext and not ring_ext and not pinky_ext:
                 gesture_name = "PEACE"
             elif index_ext and middle_ext and ring_ext and pinky_ext:
-                gesture_name = "PALM"
+                gesture_name = "OPEN"
             elif not index_ext and not middle_ext and not ring_ext and not pinky_ext:
                 gesture_name = "FIST"
             else:
@@ -1624,19 +1624,6 @@ def main():
                 dwell_progress = 0.0
 
             last_pinch_state = is_pinching
-
-            # Quick gestures when hand is outside the active dots
-            if not is_master_locked and active_dot is None and not brightness_active and (now - last_gesture_cmd_time >= 2.5):
-                if gesture == "PALM":
-                    if is_music_active:
-                        is_music_active = False
-                        audio_viz.stop()
-                    is_heartbeat_active = True
-                    is_scroll_active = False
-                    heartbeat_start_time = now
-                    last_heart_state = None
-                    last_gesture_cmd_time = now
-                    print("[GESTURE] PALM detected -> Beating Heart activated (~70 BPM)", flush=True)
 
             # 4.5. Dynamic Animations (Music Visualizer, Heartbeat & Typography Scrolling)
             if is_music_active and not is_master_locked:

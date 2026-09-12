@@ -74,7 +74,6 @@ This project connects a custom-built, discrete MOSFET-switched 8×8 red LED matr
 * **Point Index Finger**: Point across the 8 zones on the screen. The debounced zone sends `LED:<1-8>` to turn ON only that position indicator.
 * **Vertical Height Tracking (BMW-Style)**: Move your hand up and down to smoothly adjust brightness between 0% and 100%.
 * **Pinch Distance Tracking**: Press `'g'` to toggle to pinch-based brightness control (distance between thumb and index fingertip).
-* **Open Palm Gesture**: Displays the static aesthetic Heart pattern (`PATTERN:HEART`).
 * **Peace Sign / V Gesture**: Starts scrolling text `"HELLO"` (`MESSAGE:HELLO`).
 * **Fist Gesture**: Starts scrolling text `"HOW YOU DOING?"` (`MESSAGE:HOW YOU DOING?`).
 * **Keyboard Hotkeys**:
