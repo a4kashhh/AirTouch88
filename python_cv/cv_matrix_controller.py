@@ -1,15 +1,34 @@
 #!/usr/bin/env python3
 """
 ================================================================================
-Project: ESHAN × MATRIX 8x8 // Cyber-Neural Interface
+Project: Neural Matrix Controller & Hand Gesture Interface
 Script:  cv_matrix_controller.py
 
-Design Language:
-  - BOLD, HIGH-OCTANE CYBER-NEURAL AESTHETIC.
-  - Deep obsidian void with electric cyan, hot magenta, and solar amber neon accents.
-  - Supercharged multi-layer Gaussian LED bloom & holographic reticles.
-  - Tactical Air-Pad with glowing alignment grid, charge-up dwell rings, and shockwave ripples.
-  - High-impact typography and punchy tactile action controls.
+Key Features:
+  1. MODERN CYBER-TECH HUD UI:
+     - Sleek dark theme with neon cyan, amber, and emerald accents.
+     - Dedicated modular panels: Camera Viewport, Hardware Matrix Mirror,
+       Control Dock, Brightness Slider, and Live Telemetry Bar.
+     - Ultra-realistic 64-LED virtual board with multi-stage glow, bloom,
+       and specular reflection effects.
+
+  2. DEDICATED FIXED CONTROL AREA ("AIR-PAD / TOUCHPAD"):
+     - Clearly marked, fixed interaction zone on the camera viewport.
+     - 8x8 Alignment Subgrid overlay with Row (0-7) and Column (0-7) indices.
+     - Live Fingertip Reticle snapping directly to grid cells with instant feedback.
+     - Configurable Touch Point Delay (Dwell: 0.50s, 0.75s, 1.00s) with single-fire
+       anti-bounce protection (won't re-toggle until finger leaves the dot).
+     - Visual Dwell Progress ring and Pinch-to-Click ripple effect.
+     - Strict boundary isolation: movements outside the area never toggle dots.
+     - AREA CONTROL: Toggle between [LOCKED] and [EDIT] mode. In EDIT mode,
+       click & drag or resize the control area using your mouse, or use
+       quick presets ([CENTER], [RESET], [SIZE]).
+
+  3. GESTURE & HARDWARE INTEGRATION:
+     - Pointing & Pinch-to-click / Dwell-to-click for 64 individual dots.
+     - Predefined gestures: Open Palm (Heart), Peace Sign (Hello), Fist (Greeting).
+     - Dual communication: Wi-Fi UDP (port 8888) + USB Serial (115200).
+     - Non-blocking frame engine locked to target FPS.
 ================================================================================
 """
 
@@ -49,7 +68,7 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/han
 
 def ensure_model_asset():
     if not os.path.exists(MODEL_PATH):
-        print(f"[DOWNLOAD] Downloading Hand Landmarker model to {MODEL_PATH}...", flush=True)
+        print(f"[DOWNLOAD] Downloading MediaPipe Hand Landmarker model to {MODEL_PATH}...", flush=True)
         try:
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
             print("[DOWNLOAD] Model downloaded successfully.", flush=True)
@@ -81,7 +100,7 @@ class MatrixCommunicator:
         self.last_brightness_send_time = 0
         self.last_sent_brightness = -1
         self.last_sent_cmd = "IDLE"
-        self.last_cmd_status = "ONLINE"
+        self.last_cmd_status = "READY"
         self.tx_count = 0
 
     def send_command(self, cmd_str):
@@ -96,12 +115,12 @@ class MatrixCommunicator:
             self.sock.sendto(payload, (self.udp_ip, self.udp_port))
             self.last_cmd_status = "TX OK (UDP)"
         except Exception as e:
-            self.last_cmd_status = f"UDP ERR"
+            self.last_cmd_status = f"UDP ERR: {e}"
 
         if self.ser and self.ser.is_open:
             try:
                 self.ser.write(payload)
-                self.last_cmd_status += " + SER"
+                self.last_cmd_status += " + SERIAL"
             except Exception:
                 pass
 
@@ -211,13 +230,13 @@ class HandGestureAnalyzer:
             is_pinching = (pinch_dist_norm < 0.28)
 
             if is_pinching:
-                gesture_name = "PINCH"
+                gesture_name = "PINCH CLICK"
             elif index_extended and not middle_extended and not ring_extended and not pinky_extended:
                 gesture_name = "POINTING"
             elif index_extended and middle_extended and not ring_extended and not pinky_extended:
-                gesture_name = "PEACE"
+                gesture_name = "PEACE SIGN"
             elif index_extended and middle_extended and ring_extended and pinky_extended:
-                gesture_name = "PALM"
+                gesture_name = "OPEN PALM"
             elif not index_extended and not middle_extended and not ring_extended and not pinky_extended:
                 gesture_name = "FIST"
             else:
@@ -225,51 +244,38 @@ class HandGestureAnalyzer:
 
             norm_pointer = (norm_pts[8][0], norm_pts[8][1])
 
-            # Sexy Glowing Cyber-Skeleton
+            # Draw sleek cyber-skeleton on camera
             for start_idx, end_idx in HAND_CONNECTIONS:
-                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (255, 200, 0), 2, cv2.LINE_AA)
+                cv2.line(frame_bgr, pts[start_idx], pts[end_idx], (0, 210, 255), 2)
             for i, pt in enumerate(pts):
-                if i in (4, 8):
-                    cv2.circle(frame_bgr, pt, 5, (255, 50, 200), -1, cv2.LINE_AA)
-                    cv2.circle(frame_bgr, pt, 8, (255, 230, 0), 1, cv2.LINE_AA)
-                else:
-                    cv2.circle(frame_bgr, pt, 3, (0, 240, 255), -1, cv2.LINE_AA)
+                color = (0, 255, 180) if i in (4, 8) else (255, 120, 50)
+                cv2.circle(frame_bgr, pt, 3, color, -1)
 
             if is_pinching:
                 pinch_mid = ((thumb_tip[0] + index_tip[0]) // 2, (thumb_tip[1] + index_tip[1]) // 2)
-                cv2.circle(frame_bgr, pinch_mid, 14, (0, 255, 255), -1, cv2.LINE_AA)
-                cv2.circle(frame_bgr, pinch_mid, 22, (255, 0, 200), 2, cv2.LINE_AA)
+                cv2.circle(frame_bgr, pinch_mid, 12, (0, 255, 255), -1)
+                cv2.circle(frame_bgr, pinch_mid, 18, (0, 200, 255), 2)
 
         return hand_detected, gesture_name, index_tip_px, thumb_tip_px, is_pinching, norm_pointer
 
 
 # ==============================================================================
-# 3. HIGH-OCTANE CYBER UI CONSTANTS & GEOMETRY
+# 3. UI LAYOUT CONSTANTS & GEOMETRY
 # ==============================================================================
 CANVAS_W = 1280
 CANVAS_H = 720
 
-# Dual Panel Layout
-PANEL_LEFT_X = 35
-PANEL_LEFT_Y = 60
-PANEL_LEFT_W = 580
-PANEL_LEFT_H = 585
+# Viewport for Camera Feed (Left Panel)
+CAM_VIEW_X = 25
+CAM_VIEW_Y = 65
+CAM_VIEW_W = 600
+CAM_VIEW_H = 450
 
-PANEL_RIGHT_X = 645
-PANEL_RIGHT_Y = 60
-PANEL_RIGHT_W = 600
-PANEL_RIGHT_H = 585
-
-# Camera Viewport inside Left Panel
-CAM_VIEW_X = PANEL_LEFT_X + 16
-CAM_VIEW_Y = PANEL_LEFT_Y + 46
-CAM_VIEW_W = PANEL_LEFT_W - 32  # 548
-CAM_VIEW_H = 435
-
-# Dedicated Fixed Holographic Air-Pad
+# Dedicated Fixed Control Area ("Air-Pad") inside Camera View
+# Default: centered 360x360 box inside camera view
 control_area = {
-    'x': CAM_VIEW_X + (CAM_VIEW_W - 360) // 2,  # centered
-    'y': CAM_VIEW_Y + (CAM_VIEW_H - 360) // 2,
+    'x': CAM_VIEW_X + (CAM_VIEW_W - 360) // 2,  # 145
+    'y': CAM_VIEW_Y + (CAM_VIEW_H - 360) // 2,  # 110
     'w': 360,
     'h': 360,
     'locked': True
@@ -278,49 +284,59 @@ control_area = {
 # 8x8 Dot Matrix State (1 = ON, 0 = OFF)
 grid_dots = np.zeros((8, 8), dtype=np.uint8)
 
-# 8x8 Virtual Matrix Geometry (Centered inside right console)
-MATRIX_ORIGIN_X = PANEL_RIGHT_X + (PANEL_RIGHT_W - 7 * 42) // 2  # 797
-MATRIX_ORIGIN_Y = PANEL_RIGHT_Y + 128
-DOT_SPACING = 42
+# Right Panel (Virtual Matrix & Controls)
+RIGHT_PANEL_X = 645
+RIGHT_PANEL_Y = 65
+RIGHT_PANEL_W = 610
+RIGHT_PANEL_H = 580
+
+# 8x8 Virtual Matrix Geometry (Centered inside right PCB card)
+MATRIX_ORIGIN_X = 812
+MATRIX_ORIGIN_Y = 135
+DOT_SPACING = 40
 DOT_RADIUS = 14
 
-# Glowing Neon Linear Brightness Slider
-SLIDER_X = PANEL_RIGHT_X + 45
-SLIDER_Y = PANEL_RIGHT_Y + 462
-SLIDER_W = PANEL_RIGHT_W - 90  # 510
-SLIDER_H = 10
+# Brightness Slider Geometry (Horizontal)
+SLIDER_X = 725
+SLIDER_Y = 478
+SLIDER_W = 440
+SLIDER_H = 20
 current_brightness = 75
 is_dragging_brightness = False
 
-# Bold High-Voltage Action Buttons (4 punchy glowing controls)
-BTN_W = 124
-BTN_H = 36
-BTN_GAP = 14
-BTN_Y = PANEL_RIGHT_Y + 518
-BTN_START_X = PANEL_RIGHT_X + (PANEL_RIGHT_W - (4 * BTN_W + 3 * BTN_GAP)) // 2  # centered
+# Quick Preset Buttons (Two rows of 3 buttons)
+BTN_W = 145
+BTN_H = 34
+BTN_GAP_X = 16
+BTN_START_X = 720
+BTN_ROW1_Y = 524
+BTN_ROW2_Y = 570
 
-ACTION_BUTTONS = {
-    'CLEAR':  (BTN_START_X,                         BTN_Y, BTN_W, BTN_H, "CLEAR",  (45, 45, 60),   (255, 220, 0)),
-    'HEART':  (BTN_START_X + (BTN_W + BTN_GAP),     BTN_Y, BTN_W, BTN_H, "HEART",  (80, 20, 60),   (255, 40, 220)),
-    'INVERT': (BTN_START_X + (BTN_W + BTN_GAP)*2,   BTN_Y, BTN_W, BTN_H, "INVERT", (20, 60, 80),   (0, 240, 255)),
-    'PULSE':  (BTN_START_X + (BTN_W + BTN_GAP)*3,   BTN_Y, BTN_W, BTN_H, "PULSE",  (70, 40, 20),   (0, 180, 255))
+BUTTONS = {
+    'CLEAR':  (BTN_START_X,                            BTN_ROW1_Y, BTN_W, BTN_H, "CLEAR",      (55, 55, 70), (220, 220, 240)),
+    'HEART':  (BTN_START_X + BTN_W + BTN_GAP_X,       BTN_ROW1_Y, BTN_W, BTN_H, "HEART",      (80, 25, 50), (255, 110, 180)),
+    'SMILE':  (BTN_START_X + (BTN_W + BTN_GAP_X)*2,   BTN_ROW1_Y, BTN_W, BTN_H, "SMILE",      (30, 70, 50), (80, 240, 160)),
+    'PULSE':  (BTN_START_X,                            BTN_ROW2_Y, BTN_W, BTN_H, "PULSE",      (75, 40, 20), (255, 170, 60)),
+    'HELLO':  (BTN_START_X + BTN_W + BTN_GAP_X,       BTN_ROW2_Y, BTN_W, BTN_H, "MSG: HELLO", (25, 60, 80), (70, 200, 255)),
+    'GREET':  (BTN_START_X + (BTN_W + BTN_GAP_X)*2,   BTN_ROW2_Y, BTN_W, BTN_H, "MSG: GREET", (55, 30, 75), (210, 120, 255))
 }
 
 # Area Customization & Touch Delay Buttons (below Camera View)
-AREA_BTN_Y = CAM_VIEW_Y + CAM_VIEW_H + 18
+AREA_BTN_Y = CAM_VIEW_Y + CAM_VIEW_H + 15  # 530
 AREA_BTN_H = 32
 AREA_BUTTONS = {
     'LOCK_TOGGLE': (CAM_VIEW_X + 5,   AREA_BTN_Y, 115, AREA_BTN_H),
-    'DELAY_CYCLE': (CAM_VIEW_X + 130, AREA_BTN_Y, 130, AREA_BTN_H),
-    'CYCLE_SIZE':  (CAM_VIEW_X + 270, AREA_BTN_Y, 120, AREA_BTN_H),
-    'RESET':       (CAM_VIEW_X + 400, AREA_BTN_Y, 95,  AREA_BTN_H)
+    'DELAY_CYCLE': (CAM_VIEW_X + 128, AREA_BTN_Y, 125, AREA_BTN_H),
+    'CYCLE_SIZE':  (CAM_VIEW_X + 261, AREA_BTN_Y, 115, AREA_BTN_H),
+    'CENTER':      (CAM_VIEW_X + 384, AREA_BTN_Y, 95,  AREA_BTN_H),
+    'RESET':       (CAM_VIEW_X + 487, AREA_BTN_Y, 85,  AREA_BTN_H)
 }
 
 # Touch Point Delay & Anti-Bounce Settings
 DWELL_PRESETS = [0.50, 0.75, 1.00]
-dwell_preset_idx = 1  # 0.75s default
+dwell_preset_idx = 1  # 0.75s default (comfortable, deliberate touch)
 dwell_trigger_time = DWELL_PRESETS[dwell_preset_idx]
-dwell_lockout_dot = None
+dwell_lockout_dot = None  # Prevents re-triggering the same dot until finger leaves
 
 # Mouse & Drag State
 mouse_pos = (-1, -1)
@@ -333,6 +349,7 @@ dwell_dot = None
 dwell_start_time = 0
 last_air_click_time = 0
 last_pinch_state = False
+last_gesture_cmd_time = 0
 click_ripple_anim = None  # (cx, cy, start_time)
 
 
@@ -349,7 +366,7 @@ def get_dot_at_xy(px, py):
         for c in range(8):
             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
             cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
-            if math.hypot(px - cx, py - cy) <= DOT_RADIUS + 8:
+            if math.hypot(px - cx, py - cy) <= DOT_RADIUS + 6:
                 return (r, c)
     return None
 
@@ -390,38 +407,50 @@ def on_mouse_event(event, x, y, flags, param):
 
     if event == cv2.EVENT_LBUTTONDOWN:
         # 1. Click on Area Toolbar Buttons
+        # Lock / Edit Toggle
         if is_inside_rect(x, y, AREA_BUTTONS['LOCK_TOGGLE']):
             control_area['locked'] = not control_area['locked']
-            print(f"[CONTROL AREA] {'LOCKED' if control_area['locked'] else 'EDIT MODE'}", flush=True)
+            print(f"[CONTROL AREA] Mode toggled: {'LOCKED' if control_area['locked'] else 'EDIT/CUSTOMIZE'}", flush=True)
             return
 
+        # Delay Cycle Button (0.50s -> 0.75s -> 1.00s)
         elif is_inside_rect(x, y, AREA_BUTTONS['DELAY_CYCLE']):
             dwell_preset_idx = (dwell_preset_idx + 1) % len(DWELL_PRESETS)
             dwell_trigger_time = DWELL_PRESETS[dwell_preset_idx]
-            print(f"[HOLD DELAY] Set to {dwell_trigger_time:.2f}s", flush=True)
+            print(f"[TOUCH DELAY] Touch point dwell delay set to {dwell_trigger_time:.2f}s", flush=True)
             return
 
+        # Center Area
+        elif is_inside_rect(x, y, AREA_BUTTONS['CENTER']):
+            control_area['x'] = CAM_VIEW_X + (CAM_VIEW_W - control_area['w']) // 2
+            control_area['y'] = CAM_VIEW_Y + (CAM_VIEW_H - control_area['h']) // 2
+            print("[CONTROL AREA] Centered inside camera viewport.", flush=True)
+            return
+
+        # Cycle Size (300 -> 360 -> 420)
         elif is_inside_rect(x, y, AREA_BUTTONS['CYCLE_SIZE']):
             sizes = [300, 360, 420]
             curr = control_area['w']
             next_size = sizes[(sizes.index(curr) + 1) % len(sizes)] if curr in sizes else 360
             control_area['w'] = next_size
             control_area['h'] = next_size
+            # Clamp inside viewport
             control_area['x'] = max(CAM_VIEW_X + 5, min(CAM_VIEW_X + CAM_VIEW_W - next_size - 5, control_area['x']))
             control_area['y'] = max(CAM_VIEW_Y + 5, min(CAM_VIEW_Y + CAM_VIEW_H - next_size - 5, control_area['y']))
-            print(f"[CONTROL AREA] Size: {next_size}px", flush=True)
+            print(f"[CONTROL AREA] Size changed to {next_size}x{next_size}", flush=True)
             return
 
+        # Reset Area
         elif is_inside_rect(x, y, AREA_BUTTONS['RESET']):
             control_area['w'] = 360
             control_area['h'] = 360
             control_area['x'] = CAM_VIEW_X + (CAM_VIEW_W - 360) // 2
             control_area['y'] = CAM_VIEW_Y + (CAM_VIEW_H - 360) // 2
             control_area['locked'] = True
-            print("[CONTROL AREA] Reset to default.", flush=True)
+            print("[CONTROL AREA] Reset to factory default and locked.", flush=True)
             return
 
-        # 2. Area edit drag / resize
+        # 2. If Area is in EDIT mode: check for drag or resize handles
         if not control_area['locked']:
             if is_inside_rect(x, y, resize_handle_rect):
                 is_resizing_area = True
@@ -431,7 +460,7 @@ def on_mouse_event(event, x, y, flags, param):
                 drag_offset = (x - ax, y - ay)
                 return
 
-        # 3. Click directly on 64 virtual dots
+        # 3. Direct Click on Virtual Matrix 64 Dots
         dot = get_dot_at_xy(x, y)
         if dot is not None:
             r, c = dot
@@ -440,20 +469,21 @@ def on_mouse_event(event, x, y, flags, param):
             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
             cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
             click_ripple_anim = (cx, cy, time.time())
-            print(f"[CLICK] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
+            print(f"[MOUSE] Toggled Matrix Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
             return
 
         # 4. Brightness Slider Click
-        slider_expand = (SLIDER_X - 10, SLIDER_Y - 14, SLIDER_W + 20, SLIDER_H + 28)
+        slider_expand = (SLIDER_X - 10, SLIDER_Y - 10, SLIDER_W + 20, SLIDER_H + 20)
         if is_inside_rect(x, y, slider_expand):
             is_dragging_brightness = True
             ratio = (x - SLIDER_X) / float(SLIDER_W)
             current_brightness = int(max(0, min(100, ratio * 100)))
             comm.send_brightness(current_brightness)
+            print(f"[MOUSE] Brightness set to {current_brightness}%", flush=True)
             return
 
-        # 5. High-Voltage Action Buttons
-        for key, btn in ACTION_BUTTONS.items():
+        # 5. Preset Action Buttons
+        for key, btn in BUTTONS.items():
             rect = (btn[0], btn[1], btn[2], btn[3])
             if is_inside_rect(x, y, rect):
                 if key == 'CLEAR':
@@ -472,28 +502,47 @@ def on_mouse_event(event, x, y, flags, param):
                     ]
                     grid_dots[:] = heart
                     comm.send_command("PATTERN:HEART")
-                elif key == 'INVERT':
-                    grid_dots[:] = 1 - grid_dots
-                    comm.send_command("PATTERN:INVERT")
+                elif key == 'SMILE':
+                    smile = [
+                        [0,0,1,1,1,1,0,0],
+                        [0,1,0,0,0,0,1,0],
+                        [1,0,1,0,0,1,0,1],
+                        [1,0,0,0,0,0,0,1],
+                        [1,0,1,0,0,1,0,1],
+                        [1,0,0,1,1,0,0,1],
+                        [0,1,0,0,0,0,1,0],
+                        [0,0,1,1,1,1,0,0]
+                    ]
+                    grid_dots[:] = smile
+                    comm.send_command("PATTERN:SMILE")
                 elif key == 'PULSE':
                     comm.send_command("ANIMATION:PULSE")
+                elif key == 'HELLO':
+                    comm.send_command("MESSAGE:HELLO")
+                elif key == 'GREET':
+                    comm.send_command("MESSAGE:HOW YOU DOING?")
                 return
 
     elif event == cv2.EVENT_MOUSEMOVE:
+        # Dragging Brightness
         if is_dragging_brightness:
             ratio = (x - SLIDER_X) / float(SLIDER_W)
             current_brightness = int(max(0, min(100, ratio * 100)))
             comm.send_brightness(current_brightness)
 
+        # Dragging Control Area (when in EDIT mode)
         elif is_dragging_area and not control_area['locked']:
             new_x = x - drag_offset[0]
             new_y = y - drag_offset[1]
+            # Clamp inside camera viewport
             control_area['x'] = max(CAM_VIEW_X + 4, min(CAM_VIEW_X + CAM_VIEW_W - control_area['w'] - 4, new_x))
             control_area['y'] = max(CAM_VIEW_Y + 4, min(CAM_VIEW_Y + CAM_VIEW_H - control_area['h'] - 4, new_y))
 
+        # Resizing Control Area (when in EDIT mode)
         elif is_resizing_area and not control_area['locked']:
             new_w = max(200, min(CAM_VIEW_W - (control_area['x'] - CAM_VIEW_X) - 4, x - control_area['x']))
             new_h = max(200, min(CAM_VIEW_H - (control_area['y'] - CAM_VIEW_Y) - 4, y - control_area['y']))
+            # Keep square aspect
             side = min(new_w, new_h)
             control_area['w'] = side
             control_area['h'] = side
@@ -505,72 +554,86 @@ def on_mouse_event(event, x, y, flags, param):
 
 
 # ==============================================================================
-# 6. BOLD CYBER-NEURAL RENDERING SYSTEM
+# 6. MODERN UI RENDERING ENGINE
 # ==============================================================================
-def draw_bold_header(canvas, ip, port, fps, gesture):
-    """Draws an electric cyber-gradient top header."""
-    # Top Bar Solid Floor
-    cv2.rectangle(canvas, (0, 0), (CANVAS_W, 50), (14, 12, 22), -1)
+def draw_header_bar(canvas, ip, port, fps, gesture, serial_active):
+    """Draws the futuristic top HUD header."""
+    cv2.rectangle(canvas, (0, 0), (CANVAS_W, 52), (20, 22, 28), -1)
+    cv2.line(canvas, (0, 52), (CANVAS_W, 52), (0, 220, 255), 2)
+    cv2.line(canvas, (0, 53), (CANVAS_W, 53), (0, 70, 90), 1)
 
-    # Electric Neon Dual-Tone Accent Line (Cyan -> Magenta)
-    half_w = CANVAS_W // 2
-    cv2.line(canvas, (0, 50), (half_w, 50), (255, 230, 0), 2, cv2.LINE_AA)
-    cv2.line(canvas, (half_w, 50), (CANVAS_W, 50), (255, 40, 220), 2, cv2.LINE_AA)
+    # Logo / Title
+    cv2.circle(canvas, (24, 26), 7, (0, 255, 200), -1)
+    cv2.circle(canvas, (24, 26), 11, (0, 200, 160), 1)
+    cv2.putText(canvas, "NEURAL MATRIX CONTROLLER", (42, 32), cv2.FONT_HERSHEY_DUPLEX, 0.65, (255, 255, 255), 2, cv2.LINE_AA)
+    cv2.putText(canvas, "| 8x8 GESTURE INTERFACE", (370, 32), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 220, 255), 1, cv2.LINE_AA)
 
-    # Title with Glowing Cyber Badge
-    cv2.circle(canvas, (24, 25), 6, (255, 230, 0), -1, cv2.LINE_AA)
-    cv2.circle(canvas, (24, 25), 10, (255, 50, 200), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "ESHAN MATRIX", (42, 33), cv2.FONT_HERSHEY_DUPLEX, 0.68, (255, 255, 255), 2, cv2.LINE_AA)
-    cv2.putText(canvas, "// NEURAL PRO 8x8", (215, 33), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 240, 255), 1, cv2.LINE_AA)
+    # ESP32 Status Pill
+    badge_x = 590
+    cv2.rectangle(canvas, (badge_x, 12), (badge_x + 230, 40), (30, 34, 44), -1)
+    cv2.rectangle(canvas, (badge_x, 12), (badge_x + 230, 40), (70, 80, 100), 1)
+    cv2.circle(canvas, (badge_x + 16, 26), 5, (0, 255, 100), -1)
+    cv2.putText(canvas, f"ESP32: {ip}:{port}", (badge_x + 30, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (220, 230, 240), 1, cv2.LINE_AA)
 
-    # Gesture Dynamic Badge (Center)
-    if gesture and gesture != "NONE":
-        g_col = (0, 255, 255) if gesture == "PINCH" else (255, 50, 200)
-        cv2.rectangle(canvas, (540, 10), (740, 40), (28, 20, 38), -1)
-        cv2.rectangle(canvas, (540, 10), (740, 40), g_col, 2, cv2.LINE_AA)
-        cv2.putText(canvas, f">> {gesture}", (560, 30), cv2.FONT_HERSHEY_DUPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
-    else:
-        cv2.rectangle(canvas, (540, 10), (740, 40), (20, 18, 28), -1)
-        cv2.rectangle(canvas, (540, 10), (740, 40), (60, 50, 75), 1, cv2.LINE_AA)
-        cv2.putText(canvas, ">> STANDBY", (580, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (120, 110, 135), 1, cv2.LINE_AA)
+    # FPS Badge
+    fps_x = 835
+    cv2.rectangle(canvas, (fps_x, 12), (fps_x + 105, 40), (30, 34, 44), -1)
+    cv2.rectangle(canvas, (fps_x, 12), (fps_x + 105, 40), (70, 80, 100), 1)
+    fps_color = (0, 255, 120) if fps >= 50 else (0, 220, 255)
+    cv2.putText(canvas, f"FPS: {fps:.1f}", (fps_x + 14, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.48, fps_color, 1, cv2.LINE_AA)
 
-    # Telemetry Status (Right)
-    cv2.putText(canvas, f"ESP32: {ip}:{port}", (870, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (0, 255, 180), 1, cv2.LINE_AA)
-    cv2.putText(canvas, f"{fps:.0f} FPS", (1120, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.44, (255, 200, 50), 1, cv2.LINE_AA)
-    cv2.putText(canvas, "[Q] EXIT", (1200, 31), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (160, 150, 175), 1, cv2.LINE_AA)
-
-
-def draw_cyber_chassis(canvas, x, y, w, h, title=""):
-    """Draws a deep obsidian card with glowing corner accents."""
-    cv2.rectangle(canvas, (x, y), (x + w, y + h), (18, 16, 26), -1)
-    cv2.rectangle(canvas, (x, y), (x + w, y + h), (48, 42, 65), 1)
-
-    # Glowing Corner Brackets
-    c_len = 16
-    for cx, cy, dx, dy in [(x, y, 1, 1), (x + w, y, -1, 1), (x, y + h, 1, -1), (x + w, y + h, -1, -1)]:
-        cv2.line(canvas, (cx, cy), (cx + dx * c_len, cy), (255, 200, 0), 2, cv2.LINE_AA)
-        cv2.line(canvas, (cx, cy), (cx, cy + dy * c_len), (255, 200, 0), 2, cv2.LINE_AA)
-
-    if title:
-        cv2.putText(canvas, title, (x + 20, y + 28), cv2.FONT_HERSHEY_DUPLEX, 0.48, (255, 240, 120), 1, cv2.LINE_AA)
+    # Gesture Indicator Pill
+    g_colors = {
+        'PINCH CLICK': (0, 230, 255),
+        'POINTING':    (255, 200, 0),
+        'OPEN PALM':   (0, 255, 120),
+        'PEACE SIGN':  (255, 120, 180),
+        'FIST':        (180, 120, 255),
+        'TRACKING':    (200, 200, 200),
+        'NONE':        (120, 120, 130)
+    }
+    g_col = g_colors.get(gesture, (150, 150, 150))
+    pill_x = 955
+    cv2.rectangle(canvas, (pill_x, 12), (pill_x + 305, 40), (28, 30, 38), -1)
+    cv2.rectangle(canvas, (pill_x, 12), (pill_x + 305, 40), g_col, 2)
+    cv2.circle(canvas, (pill_x + 16, 26), 6, g_col, -1)
+    cv2.putText(canvas, f"GESTURE: {gesture}", (pill_x + 30, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (255, 255, 255), 1, cv2.LINE_AA)
 
 
-def draw_camera_feed(canvas, frame_cam):
-    """Embeds the camera feed inside the left chassis with cyber-reticle corners."""
+def draw_camera_viewport(canvas, frame_cam):
+    """Embeds and frames the camera feed on the left panel."""
+    # Frame Container Card
+    cv2.rectangle(canvas, (CAM_VIEW_X - 6, CAM_VIEW_Y - 6),
+                  (CAM_VIEW_X + CAM_VIEW_W + 6, CAM_VIEW_Y + CAM_VIEW_H + 6), (28, 32, 42), -1)
+    cv2.rectangle(canvas, (CAM_VIEW_X - 6, CAM_VIEW_Y - 6),
+                  (CAM_VIEW_X + CAM_VIEW_W + 6, CAM_VIEW_Y + CAM_VIEW_H + 6), (50, 60, 80), 1)
+
+    # Resize and place camera frame
     cam_resized = cv2.resize(frame_cam, (CAM_VIEW_W, CAM_VIEW_H))
     canvas[CAM_VIEW_Y:CAM_VIEW_Y + CAM_VIEW_H, CAM_VIEW_X:CAM_VIEW_X + CAM_VIEW_W] = cam_resized
 
-    cv2.rectangle(canvas, (CAM_VIEW_X, CAM_VIEW_Y),
-                  (CAM_VIEW_X + CAM_VIEW_W, CAM_VIEW_Y + CAM_VIEW_H), (60, 50, 80), 1)
+    # Corner brackets (Sci-Fi reticle look)
+    bracket_len = 18
+    corners = [
+        (CAM_VIEW_X, CAM_VIEW_Y),
+        (CAM_VIEW_X + CAM_VIEW_W, CAM_VIEW_Y),
+        (CAM_VIEW_X, CAM_VIEW_Y + CAM_VIEW_H),
+        (CAM_VIEW_X + CAM_VIEW_W, CAM_VIEW_Y + CAM_VIEW_H)
+    ]
+    for cx, cy in corners:
+        dx = 1 if cx == CAM_VIEW_X else -1
+        dy = 1 if cy == CAM_VIEW_Y else -1
+        cv2.line(canvas, (cx, cy), (cx + dx * bracket_len, cy), (0, 240, 255), 2)
+        cv2.line(canvas, (cx, cy), (cx, cy + dy * bracket_len), (0, 240, 255), 2)
 
 
-def draw_holographic_air_pad(canvas, active_cell, dwell_progress=0.0, tip_px=None):
+def draw_fixed_control_area(canvas, active_cell, dwell_progress=0.0, tip_px=None):
     """
-    Renders an electric holographic Air-Pad with:
-      - Neon Cyan / Magenta cyber-grid overlay
-      - Illuminated target cell with coordinates
-      - High-voltage charge-up reticle (Cyan -> Emerald -> Gold)
-      - Shockwave ripple animations
+    Renders the dedicated Fixed Control Area (Air-Pad) with:
+      - 8x8 translucent subgrid overlay with row & col indices
+      - Active hover cell illumination
+      - Fingertip reticle & dwell circle
+      - Resizing / moving handles when in EDIT mode
     """
     ax = control_area['x']
     ay = control_area['y']
@@ -578,125 +641,166 @@ def draw_holographic_air_pad(canvas, active_cell, dwell_progress=0.0, tip_px=Non
     ah = control_area['h']
     is_locked = control_area['locked']
 
-    # Translucent cyber-tint
+    # 1. Base Border & Background Tint
+    border_color = (0, 230, 255) if is_locked else (0, 165, 255)  # Cyan if locked, Orange if edit
+    title_text = f"FIXED AIR-PAD [LOCKED | {dwell_trigger_time:.2f}s]" if is_locked else "AIR-PAD [EDIT MODE: DRAG/RESIZE]"
+
+    # Subtle translucent dark fill
     overlay = canvas.copy()
-    cv2.rectangle(overlay, (ax, ay), (ax + aw, ay + ah), (25, 15, 35), -1)
-    cv2.addWeighted(overlay, 0.35, canvas, 0.65, 0, canvas)
+    cv2.rectangle(overlay, (ax, ay), (ax + aw, ay + ah), (15, 20, 30), -1)
+    cv2.addWeighted(overlay, 0.28, canvas, 0.72, 0, canvas)
 
-    # High-Voltage Neon Border
-    pad_border = (255, 230, 0) if is_locked else (0, 160, 255)
-    cv2.rectangle(canvas, (ax, ay), (ax + aw, ay + ah), pad_border, 2)
+    # Outer border
+    cv2.rectangle(canvas, (ax, ay), (ax + aw, ay + ah), border_color, 2)
 
-    # 8x8 Grid with Coordinates
+    # 2. 8x8 Alignment Subgrid
     cw = aw / 8.0
     ch = ah / 8.0
-    for i in range(1, 8):
-        gx = int(ax + i * cw)
-        gy = int(ay + i * ch)
-        cv2.line(canvas, (gx, ay), (gx, ay + ah), (55, 45, 75), 1)
-        cv2.line(canvas, (ax, gy), (ax + aw, gy), (55, 45, 75), 1)
 
-    # Micro row/column coordinates on perimeter
+    for i in range(1, 8):
+        # Vertical grid line
+        gx = int(ax + i * cw)
+        cv2.line(canvas, (gx, ay), (gx, ay + ah), (50, 75, 100), 1)
+        # Horizontal grid line
+        gy = int(ay + i * ch)
+        cv2.line(canvas, (ax, gy), (ax + aw, gy), (50, 75, 100), 1)
+
+    # Grid Index Labels along top and left
     for c in range(8):
         lbl_x = int(ax + c * cw + cw / 2 - 4)
-        cv2.putText(canvas, str(c), (lbl_x, ay - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 220, 0), 1, cv2.LINE_AA)
+        cv2.putText(canvas, str(c), (lbl_x, ay - 6), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 200, 255), 1)
     for r in range(8):
         lbl_y = int(ay + r * ch + ch / 2 + 4)
-        cv2.putText(canvas, str(r), (ax - 14, lbl_y), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 220, 0), 1, cv2.LINE_AA)
+        cv2.putText(canvas, str(r), (ax - 14, lbl_y), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 200, 255), 1)
 
-    # Active Target Cell Highlight
+    # 3. Active Target Cell Highlight (if fingertip or mouse is hovering)
     if active_cell is not None:
         r, c = active_cell
-        cx1 = int(ax + c * cw)
-        cy1 = int(ay + r * ch)
-        cx2 = int(cx1 + cw)
-        cy2 = int(cy1 + ch)
+        cell_x1 = int(ax + c * cw)
+        cell_y1 = int(ay + r * ch)
+        cell_x2 = int(cell_x1 + cw)
+        cell_y2 = int(cell_y1 + ch)
 
-        cell_glow = canvas.copy()
-        cv2.rectangle(cell_glow, (cx1, cy1), (cx2, cy2), (255, 230, 0), -1)
-        cv2.addWeighted(cell_glow, 0.38, canvas, 0.62, 0, canvas)
+        # Highlight cell fill
+        cell_overlay = canvas.copy()
+        cv2.rectangle(cell_overlay, (cell_x1, cell_y1), (cell_x2, cell_y2), (0, 240, 255), -1)
+        cv2.addWeighted(cell_overlay, 0.35, canvas, 0.65, 0, canvas)
 
-        cv2.rectangle(canvas, (cx1, cy1), (cx2, cy2), (255, 255, 255), 2)
-        coord_lbl = f"[{r}:{c}]"
-        cv2.putText(canvas, coord_lbl, (cx1 + 4, cy1 + 14),
-                    cv2.FONT_HERSHEY_DUPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
+        # Glowing cell border
+        cv2.rectangle(canvas, (cell_x1, cell_y1), (cell_x2, cell_y2), (0, 255, 255), 2)
+        # Cell coordinate tag
+        cv2.putText(canvas, f"({r},{c})", (cell_x1 + 3, cell_y1 + 14),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, (255, 255, 255), 1, cv2.LINE_AA)
 
-    # High-Voltage Charging Reticle
+    # 4. Fingertip Crosshair Reticle & Dwell Indicator
     if tip_px is not None and is_inside_rect(tip_px[0], tip_px[1], (ax, ay, aw, ah)):
         tx, ty = tip_px
-        cv2.circle(canvas, (tx, ty), 4, (255, 255, 255), -1, cv2.LINE_AA)
-        cv2.circle(canvas, (tx, ty), 12, (255, 230, 0), 2, cv2.LINE_AA)
-        cv2.line(canvas, (tx - 16, ty), (tx + 16, ty), (255, 230, 0), 1, cv2.LINE_AA)
-        cv2.line(canvas, (tx, ty - 16), (tx, ty + 16), (255, 230, 0), 1, cv2.LINE_AA)
+        cv2.circle(canvas, (tx, ty), 12, (0, 255, 255), 2)
+        cv2.circle(canvas, (tx, ty), 4, (0, 200, 255), -1)
+        cv2.line(canvas, (tx - 16, ty), (tx + 16, ty), (0, 255, 255), 1)
+        cv2.line(canvas, (tx, ty - 16), (tx, ty + 16), (0, 255, 255), 1)
 
-        # Dynamic Multi-Stage Dwell Charge Arc
+        # Dwell progress arc (Smoothly fills over dwell_trigger_time)
         if dwell_progress > 0.0:
-            end_ang = int(dwell_progress * 360)
-            if dwell_progress < 0.6:
-                arc_col = (255, 230, 0)       # Electric Cyan
-            elif dwell_progress < 0.95:
-                arc_col = (0, 255, 120)       # Hot Emerald
-            else:
-                arc_col = (0, 255, 255)       # Solar Gold
-            cv2.ellipse(canvas, (tx, ty), (18, 18), -90, 0, end_ang, arc_col, 3, cv2.LINE_AA)
+            end_angle = int(dwell_progress * 360)
+            arc_color = (0, 255, 120) if dwell_progress < 1.0 else (0, 255, 255)
+            cv2.ellipse(canvas, (tx, ty), (18, 18), -90, 0, end_angle, arc_color, 3)
 
-    # Tag Banner
-    tag = "AIR-PAD // LOCKED" if is_locked else "AIR-PAD // DRAG / RESIZE"
-    cv2.rectangle(canvas, (ax, ay - 24), (ax + 175, ay), pad_border, -1)
-    cv2.putText(canvas, tag, (ax + 8, ay - 7), cv2.FONT_HERSHEY_DUPLEX, 0.36, (15, 12, 22), 1, cv2.LINE_AA)
+    # 5. Top Banner on Control Area
+    banner_w = 230 if is_locked else 240
+    cv2.rectangle(canvas, (ax, ay - 24), (ax + banner_w, ay), border_color, -1)
+    cv2.putText(canvas, title_text, (ax + 6, ay - 7),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.36, (15, 20, 30), 1, cv2.LINE_AA)
 
+    # 6. Resize Handle (shown when in EDIT mode)
     if not is_locked:
-        hx = ax + aw - 22
-        hy = ay + ah - 22
-        cv2.rectangle(canvas, (hx, hy), (ax + aw, ay + ah), (0, 180, 255), -1)
-        cv2.putText(canvas, "+", (hx + 5, hy + 16), cv2.FONT_HERSHEY_SIMPLEX, 0.48, (0, 0, 0), 2)
+        handle_x = ax + aw - 20
+        handle_y = ay + ah - 20
+        cv2.rectangle(canvas, (handle_x, handle_y), (ax + aw, ay + ah), (0, 165, 255), -1)
+        cv2.putText(canvas, "+", (handle_x + 5, handle_y + 15), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 2)
 
 
-def draw_cyber_button(canvas, rect, label, is_hovered=False, active_color=(0, 240, 255), is_active=False):
-    """Draws a bold, punchy cyber button with glowing border and hover intensity."""
-    bx, by, bw, bh = rect
-    bg = (38, 32, 52) if is_hovered else (24, 20, 34)
-    if is_active:
-        bg = (50, 40, 70)
-    border = active_color if is_hovered else tuple(int(c * 0.7) for c in active_color)
+def draw_area_control_toolbar(canvas):
+    """Draws the area configuration toolbar below the camera feed."""
+    is_locked = control_area['locked']
 
-    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), bg, -1)
-    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border, 2 if is_hovered else 1)
+    # 1. Lock/Edit Toggle Button
+    bx, by, bw, bh = AREA_BUTTONS['LOCK_TOGGLE']
+    lock_bg = (35, 75, 45) if is_locked else (80, 50, 20)
+    lock_border = (0, 240, 120) if is_locked else (0, 180, 255)
+    lock_txt = "[ LOCKED ]" if is_locked else "[ EDIT AREA ]"
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), lock_bg, -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), lock_border, 2)
+    cv2.putText(canvas, lock_txt, (bx + 12, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 255, 255), 1, cv2.LINE_AA)
 
-    (tw, th), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_DUPLEX, 0.44, 1)
-    tx = bx + (bw - tw) // 2
-    ty = by + (bh + th) // 2
-    txt_col = (255, 255, 255) if is_hovered else (220, 225, 235)
-    cv2.putText(canvas, label, (tx, ty), cv2.FONT_HERSHEY_DUPLEX, 0.44, txt_col, 1, cv2.LINE_AA)
+    # 2. Touch Delay Cycle Button
+    bx, by, bw, bh = AREA_BUTTONS['DELAY_CYCLE']
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (30, 48, 65), -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (0, 200, 255), 1)
+    cv2.putText(canvas, f"HOLD: {dwell_trigger_time:.2f}s", (bx + 14, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.41, (0, 240, 255), 1, cv2.LINE_AA)
+
+    # 3. Cycle Size Button
+    bx, by, bw, bh = AREA_BUTTONS['CYCLE_SIZE']
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (36, 42, 54), -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (80, 95, 120), 1)
+    cv2.putText(canvas, f"SIZE: {control_area['w']}px", (bx + 12, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.40, (200, 220, 240), 1, cv2.LINE_AA)
+
+    # 4. Center Button
+    bx, by, bw, bh = AREA_BUTTONS['CENTER']
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (36, 42, 54), -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (80, 95, 120), 1)
+    cv2.putText(canvas, "CENTER", (bx + 16, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 220, 240), 1, cv2.LINE_AA)
+
+    # 5. Reset Button
+    bx, by, bw, bh = AREA_BUTTONS['RESET']
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (50, 32, 38), -1)
+    cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), (120, 70, 80), 1)
+    cv2.putText(canvas, "RESET", (bx + 16, by + 21), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (240, 180, 190), 1, cv2.LINE_AA)
+
+    # Usage Note below toolbar
+    cv2.putText(canvas, f"Touch Point Delay: Hold finger for {dwell_trigger_time:.2f}s to toggle. Single-fire lock prevents repeat toggling.",
+                (CAM_VIEW_X + 5, by + bh + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.36, (140, 155, 175), 1, cv2.LINE_AA)
 
 
 def draw_virtual_matrix(canvas, active_cell=None):
     """
-    Renders the supercharged 8x8 hardware matrix
-    with rich cinematic Gaussian bloom and brilliant core illumination.
+    Renders the hardware mirror: a realistic 8x8 LED matrix PCB
+    with glowing red/amber LEDs, multi-stage bloom, and coordinate labels.
     """
-    lit_count = int(np.sum(grid_dots))
-    badge_str = f"{lit_count} / 64 LIT"
-    cv2.rectangle(canvas, (PANEL_RIGHT_X + PANEL_RIGHT_W - 130, PANEL_RIGHT_Y + 12),
-                  (PANEL_RIGHT_X + PANEL_RIGHT_W - 20, PANEL_RIGHT_Y + 36), (36, 24, 48), -1)
-    cv2.rectangle(canvas, (PANEL_RIGHT_X + PANEL_RIGHT_W - 130, PANEL_RIGHT_Y + 12),
-                  (PANEL_RIGHT_X + PANEL_RIGHT_W - 20, PANEL_RIGHT_Y + 36), (255, 40, 220), 1)
-    cv2.putText(canvas, badge_str, (PANEL_RIGHT_X + PANEL_RIGHT_W - 118, PANEL_RIGHT_Y + 28),
-                cv2.FONT_HERSHEY_DUPLEX, 0.40, (255, 120, 230), 1, cv2.LINE_AA)
+    # PCB Panel Card
+    card_x1 = RIGHT_PANEL_X + 20
+    card_y1 = RIGHT_PANEL_Y + 10
+    card_x2 = RIGHT_PANEL_X + RIGHT_PANEL_W - 20
+    card_y2 = RIGHT_PANEL_Y + 395  # 460
 
-    # Column Numbers
+    cv2.rectangle(canvas, (card_x1, card_y1), (card_x2, card_y2), (18, 20, 26), -1)
+    cv2.rectangle(canvas, (card_x1, card_y1), (card_x2, card_y2), (55, 65, 85), 2)
+
+    # Board Header
+    cv2.putText(canvas, "64-DOT HARDWARE MATRIX (8x8 MIRROR)", (card_x1 + 18, card_y1 + 28),
+                cv2.FONT_HERSHEY_DUPLEX, 0.52, (0, 240, 255), 1, cv2.LINE_AA)
+
+    # Active LED count pill
+    lit_count = int(np.sum(grid_dots))
+    pill_text = f"{lit_count} / 64 LIT"
+    cv2.rectangle(canvas, (card_x2 - 125, card_y1 + 12), (card_x2 - 15, card_y1 + 34), (32, 38, 48), -1)
+    cv2.rectangle(canvas, (card_x2 - 125, card_y1 + 12), (card_x2 - 15, card_y1 + 34), (0, 200, 255), 1)
+    cv2.putText(canvas, pill_text, (card_x2 - 114, card_y1 + 27),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.40, (0, 255, 200), 1, cv2.LINE_AA)
+
+    # Column Numbers (0-7)
     for c in range(8):
         cx = MATRIX_ORIGIN_X + c * DOT_SPACING
         cv2.putText(canvas, f"C{c}", (cx - 8, MATRIX_ORIGIN_Y - 14),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 130, 160), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 140, 165), 1, cv2.LINE_AA)
 
-    # Row Numbers
+    # Row Numbers (0-7)
     for r in range(8):
         cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
         cv2.putText(canvas, f"R{r}", (MATRIX_ORIGIN_X - 32, cy + 5),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (140, 130, 160), 1, cv2.LINE_AA)
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 140, 165), 1, cv2.LINE_AA)
 
-    # Render All 64 Glowing LEDs
+    # Render All 64 Circular LEDs
     for r in range(8):
         for c in range(8):
             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
@@ -705,82 +809,99 @@ def draw_virtual_matrix(canvas, active_cell=None):
             is_hovered = (active_cell == (r, c))
 
             if is_lit:
-                # Supercharged multi-layer Gaussian bloom (Crimson -> Fiery Red -> Hot Gold -> White Core)
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 10, (15, 20, 180), -1, cv2.LINE_AA)    # Outer atmospheric aura
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 5, (20, 60, 255), -1, cv2.LINE_AA)     # Radiant bloom
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (40, 140, 255), -1, cv2.LINE_AA)        # Vibrant fiery body
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS - 5, (160, 220, 255), -1, cv2.LINE_AA)   # Hot solar core
-                cv2.circle(canvas, (cx - 3, cy - 3), 3, (255, 255, 255), -1, cv2.LINE_AA)        # Diamond reflection
+                # Multi-stage glow effect (ambient halo -> core -> hot specular glint)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 7, (0, 0, 160), -1)        # Outer red halo
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 3, (20, 40, 230), -1)      # Mid glow
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (40, 80, 255), -1)          # Bright core
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS - 4, (120, 170, 255), -1)    # Hot center
+                cv2.circle(canvas, (cx - 3, cy - 3), 3, (230, 240, 255), -1)        # Specular glint
             else:
-                # Sleek glossy dark lens
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (30, 26, 38), -1, cv2.LINE_AA)
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (70, 60, 90), 1, cv2.LINE_AA)
-                cv2.circle(canvas, (cx, cy), 3, (50, 42, 62), -1, cv2.LINE_AA)
+                # Dark matte lens with subtle cathode ring
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (30, 26, 36), -1)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS, (65, 55, 75), 1)
+                cv2.circle(canvas, (cx, cy), 3, (48, 42, 56), -1)
 
-            # High-Impact Hover Reticle
+            # Hover Targeting Ring (from hand or mouse)
             if is_hovered:
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 8, (255, 230, 0), 2, cv2.LINE_AA)
-                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 12, (255, 40, 220), 1, cv2.LINE_AA)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 8, (0, 255, 255), 2)
+                cv2.circle(canvas, (cx, cy), DOT_RADIUS + 11, (0, 180, 255), 1)
 
-    # Shockwave Ripple Animation
+    # Click Ripple Animation
     global click_ripple_anim
     if click_ripple_anim is not None:
         rx, ry, r_time = click_ripple_anim
         elapsed = time.time() - r_time
         if elapsed <= 0.35:
-            radius = int(DOT_RADIUS + elapsed * 75)
+            radius = int(DOT_RADIUS + elapsed * 70)
             alpha = max(0, int(255 * (1.0 - elapsed / 0.35)))
-            cv2.circle(canvas, (rx, ry), radius, (alpha, alpha, 255), 2, cv2.LINE_AA)
+            cv2.circle(canvas, (rx, ry), radius, (0, alpha, 255), 2)
         else:
             click_ripple_anim = None
 
 
-def draw_neon_brightness(canvas, brightness, is_dragging):
-    """Draws a glowing neon linear slider with dynamic gradient track."""
-    cv2.putText(canvas, "BRIGHTNESS INTENSITY", (SLIDER_X, SLIDER_Y - 14),
-                cv2.FONT_HERSHEY_DUPLEX, 0.42, (0, 240, 255), 1, cv2.LINE_AA)
-    cv2.putText(canvas, f"{brightness}%", (SLIDER_X + SLIDER_W - 40, SLIDER_Y - 14),
-                cv2.FONT_HERSHEY_DUPLEX, 0.44, (255, 255, 255), 1, cv2.LINE_AA)
+def draw_brightness_slider(canvas, brightness, is_dragging):
+    """Draws the sleek horizontal brightness control slider."""
+    # Label & Value
+    cv2.putText(canvas, "BRIGHTNESS", (SLIDER_X, SLIDER_Y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
+    cv2.putText(canvas, f"{brightness}%", (SLIDER_X + SLIDER_W + 15, SLIDER_Y + 15),
+                cv2.FONT_HERSHEY_DUPLEX, 0.50, (255, 255, 255), 1, cv2.LINE_AA)
 
-    # Base Track
-    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), (34, 28, 46), -1)
-    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), (70, 60, 95), 1)
+    # Background Track
+    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), (32, 36, 46), -1)
+    track_border = (0, 240, 255) if is_dragging else (65, 75, 95)
+    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + SLIDER_W, SLIDER_Y + SLIDER_H), track_border, 1)
 
-    # Glowing Gradient Fill
+    # Filled Bar (Glowing gradient look)
     fill_w = int(SLIDER_W * (brightness / 100.0))
-    fill_col = (255, 230, 0) if is_dragging else (255, 180, 0)
-    cv2.rectangle(canvas, (SLIDER_X, SLIDER_Y), (SLIDER_X + fill_w, SLIDER_Y + SLIDER_H), fill_col, -1)
+    fill_color = (0, 220, 255) if is_dragging else (0, 160, 220)
+    cv2.rectangle(canvas, (SLIDER_X + 2, SLIDER_Y + 2), (SLIDER_X + fill_w, SLIDER_Y + SLIDER_H - 2), fill_color, -1)
 
-    # Radiant Knob
+    # Thumb Knob
     knob_x = SLIDER_X + fill_w
     knob_y = SLIDER_Y + SLIDER_H // 2
-    cv2.circle(canvas, (knob_x, knob_y), 9, (255, 255, 255), -1, cv2.LINE_AA)
-    cv2.circle(canvas, (knob_x, knob_y), 13, (255, 50, 200), 2, cv2.LINE_AA)
+    cv2.circle(canvas, (knob_x, knob_y), 9, (255, 255, 255), -1)
+    cv2.circle(canvas, (knob_x, knob_y), 9, (0, 180, 255), 2)
 
 
-def draw_bottom_telemetry(canvas, active_cell, last_cmd, cmd_status):
-    """Draws the high-contrast bottom status HUD."""
-    bar_y = 665
-    cv2.rectangle(canvas, (0, bar_y), (CANVAS_W, CANVAS_H), (14, 12, 22), -1)
-    cv2.line(canvas, (0, bar_y), (CANVAS_W, bar_y), (48, 40, 65), 1)
+def draw_preset_buttons(canvas):
+    """Draws quick hardware pattern action buttons."""
+    for key, (bx, by, bw, bh, label, bg_col, text_col) in BUTTONS.items():
+        is_hover = is_inside_rect(mouse_pos[0], mouse_pos[1], (bx, by, bw, bh))
+        current_bg = tuple(min(255, c + 25) for c in bg_col) if is_hover else bg_col
+        border_col = (0, 240, 255) if is_hover else tuple(min(255, c + 40) for c in bg_col)
 
-    # Target
-    if active_cell:
-        r, c = active_cell
-        target_str = f"TARGET >> ROW {r} : COL {c} [DOT #{r*8 + c + 1:02d}]"
-        t_col = (0, 255, 120)
-    else:
-        target_str = "TARGET >> AIR-PAD READY"
-        t_col = (130, 120, 150)
-    cv2.putText(canvas, target_str, (40, bar_y + 32), cv2.FONT_HERSHEY_DUPLEX, 0.44, t_col, 1, cv2.LINE_AA)
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), current_bg, -1)
+        cv2.rectangle(canvas, (bx, by), (bx + bw, by + bh), border_col, 2 if is_hover else 1)
+        cv2.putText(canvas, label, (bx + 18, by + 22), cv2.FONT_HERSHEY_SIMPLEX, 0.44, text_col, 1, cv2.LINE_AA)
 
-    # Last Command Status
-    disp_str = f"DISPATCH: {cmd_status} // {last_cmd}"
-    cv2.putText(canvas, disp_str, (520, bar_y + 32), cv2.FONT_HERSHEY_DUPLEX, 0.44, (255, 200, 0), 1, cv2.LINE_AA)
 
-    # Shortcut Hints
-    keys_str = "[C] CLEAR  [H] HEART  [I] INVERT  [P] PULSE  [L] LOCK"
-    cv2.putText(canvas, keys_str, (880, bar_y + 32), cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 140, 170), 1, cv2.LINE_AA)
+def draw_telemetry_bar(canvas, active_cell, last_cmd, cmd_status):
+    """Draws the bottom telemetry status card."""
+    bar_y = 660
+    bar_h = 50
+    cv2.rectangle(canvas, (0, bar_y), (CANVAS_W, bar_y + bar_h), (18, 20, 26), -1)
+    cv2.line(canvas, (0, bar_y), (CANVAS_W, bar_y), (45, 55, 75), 1)
+
+    # Area status & touch delay
+    area_status = f"AREA: {control_area['w']}x{control_area['h']} [{'LOCKED' if control_area['locked'] else 'EDIT'}] | DELAY: {dwell_trigger_time:.2f}s"
+    cv2.putText(canvas, area_status, (25, bar_y + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 220, 255), 1, cv2.LINE_AA)
+
+    # Active Target
+    target_str = f"TARGET: Row {active_cell[0]}, Col {active_cell[1]} [Dot #{active_cell[0]*8 + active_cell[1] + 1}]" if active_cell else "TARGET: None (Out of area)"
+    target_col = (0, 255, 120) if active_cell else (130, 140, 160)
+    cv2.putText(canvas, target_str, (370, bar_y + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, target_col, 1, cv2.LINE_AA)
+
+    # Last Command & Comm Status
+    comm_str = f"LAST TX: {last_cmd} | {cmd_status}"
+    cv2.putText(canvas, comm_str, (710, bar_y + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.42, (255, 180, 60), 1, cv2.LINE_AA)
+
+    # Shortcuts Tip
+    cv2.putText(canvas, "[Q] Quit  [C] Clear  [H] Heart  [D] Delay", (1030, bar_y + 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 160, 180), 1, cv2.LINE_AA)
 
 
 # ==============================================================================
@@ -788,10 +909,10 @@ def draw_bottom_telemetry(canvas, active_cell, last_cmd, cmd_status):
 # ==============================================================================
 def main():
     global dwell_dot, dwell_start_time, last_air_click_time, last_pinch_state
-    global current_brightness, click_ripple_anim
+    global last_gesture_cmd_time, current_brightness, click_ripple_anim
     global dwell_lockout_dot, dwell_preset_idx, dwell_trigger_time
 
-    parser = argparse.ArgumentParser(description="ESHAN MATRIX // Cyber-Neural Interface")
+    parser = argparse.ArgumentParser(description="Neural Matrix Controller: 8x8 Hand Gesture Interface")
     parser.add_argument("--ip", type=str, default="10.194.177.102", help="ESP32-C3 Wi-Fi IP address")
     parser.add_argument("--port", type=int, default=8888, help="ESP32-C3 UDP port (default: 8888)")
     parser.add_argument("--serial", type=str, default=None, help="Optional Serial Port")
@@ -806,11 +927,13 @@ def main():
     dwell_trigger_time = float(args.dwell)
 
     print("\n" + "=" * 64, flush=True)
-    print("  ESHAN MATRIX 8x8 // BOLD CYBER-NEURAL CONTROLLER", flush=True)
+    print("  NEURAL MATRIX CONTROLLER: 8x8 HAND GESTURE INTERFACE", flush=True)
     print(f"  Target ESP32-C3 IP:   {args.ip}:{args.port}", flush=True)
     if args.serial:
         print(f"  Serial Fallback:      {args.serial}", flush=True)
-    print(f"  Touch Point Delay:    {dwell_trigger_time:.2f}s", flush=True)
+    print(f"  Target Frame Rate:    {int(TARGET_FPS)} FPS", flush=True)
+    print(f"  Touch Point Delay:    {dwell_trigger_time:.2f}s (single-fire anti-bounce active)", flush=True)
+    print("  Dedicated Fixed Control Area: Active (isolated from accidental input)", flush=True)
     print("=" * 64 + "\n", flush=True)
 
     comm = MatrixCommunicator(udp_ip=args.ip, udp_port=args.port, serial_port=args.serial)
@@ -830,13 +953,15 @@ def main():
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         cap.set(cv2.CAP_PROP_FPS, TARGET_FPS)
 
-    WINDOW_NAME = "ESHAN MATRIX // Cyber-Neural Interface"
+    WINDOW_NAME = "Neural Matrix Controller"
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     cv2.resizeWindow(WINDOW_NAME, CANVAS_W, CANVAS_H)
     cv2.setMouseCallback(WINDOW_NAME, on_mouse_event, comm)
 
     fps = TARGET_FPS
     sim_angle = 0.0
+
+    print("[SYSTEM] Controller ready. Move hand inside the Fixed Control Area to interact.", flush=True)
 
     try:
         while True:
@@ -851,6 +976,7 @@ def main():
                 frame_cam = cv2.flip(frame_raw, 1)
                 detected, gesture, tip_px_raw, thumb_px_raw, is_pinching, norm_pointer = analyzer.analyze(frame_cam)
 
+                # Scale fingertip coordinates from raw camera resolution to canvas camera viewport
                 tip_canvas = None
                 if tip_px_raw is not None:
                     raw_h, raw_w = frame_cam.shape[:2]
@@ -861,7 +987,8 @@ def main():
                         int(CAM_VIEW_Y + tip_px_raw[1] * scale_y)
                     )
             else:
-                frame_cam = np.full((CAM_VIEW_H, CAM_VIEW_W, 3), 22, dtype=np.uint8)
+                # Demo simulation mode: animated hand pointer
+                frame_cam = np.full((CAM_VIEW_H, CAM_VIEW_W, 3), 26, dtype=np.uint8)
                 sim_angle += 0.03
                 ax = control_area['x']
                 ay = control_area['y']
@@ -872,15 +999,16 @@ def main():
                 tip_canvas = (sim_x, sim_y)
                 is_pinching = (int(sim_angle * 2) % 8 == 0)
                 detected = True
-                gesture = "PINCH" if is_pinching else "POINTING"
+                gesture = "PINCH CLICK" if is_pinching else "POINTING"
 
+                # Draw pointer on simulated camera
                 cam_sim_x = sim_x - CAM_VIEW_X
                 cam_sim_y = sim_y - CAM_VIEW_Y
                 if 0 <= cam_sim_x < CAM_VIEW_W and 0 <= cam_sim_y < CAM_VIEW_H:
-                    cv2.circle(frame_cam, (cam_sim_x, cam_sim_y), 8, (255, 230, 0), -1, cv2.LINE_AA)
+                    cv2.circle(frame_cam, (cam_sim_x, cam_sim_y), 10, (0, 255, 255), -1)
 
-            # 2. Main Canvas (Deep Midnight Void)
-            canvas = np.full((CANVAS_H, CANVAS_W, 3), 12, dtype=np.uint8)
+            # 2. Main Canvas Assembly
+            canvas = np.full((CANVAS_H, CANVAS_W, 3), 16, dtype=np.uint8)
 
             # 3. Hand Interaction Inside Fixed Control Area
             active_cell = None
@@ -889,7 +1017,7 @@ def main():
             if tip_canvas is not None:
                 active_cell = get_cell_from_control_area(tip_canvas[0], tip_canvas[1])
 
-            # Mouse hover fallback
+            # Mouse hover fallback (on virtual matrix or control area)
             if active_cell is None:
                 active_cell = get_dot_at_xy(mouse_pos[0], mouse_pos[1])
                 if active_cell is None:
@@ -904,13 +1032,13 @@ def main():
                     grid_dots[r, c] ^= 1
                     comm.send_toggle_dot(r, c)
                     last_air_click_time = now
-                    dwell_lockout_dot = active_cell
+                    dwell_lockout_dot = active_cell  # Also lock out dwell on this dot
                     cx = MATRIX_ORIGIN_X + c * DOT_SPACING
                     cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
                     click_ripple_anim = (cx, cy, now)
-                    print(f"[HAND PINCH] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
+                    print(f"[HAND PINCH] Toggled Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
 
-            # DWELL-TO-CLICK (Hold steady for dwell_trigger_time with single-fire anti-bounce)
+            # DWELL-TO-CLICK (Hold steady for dwell_trigger_time inside Fixed Control Area)
             if active_cell is not None and not is_pinching:
                 if active_cell == dwell_dot:
                     if active_cell != dwell_lockout_dot:
@@ -921,15 +1049,17 @@ def main():
                             grid_dots[r, c] ^= 1
                             comm.send_toggle_dot(r, c)
                             last_air_click_time = now
-                            dwell_lockout_dot = active_cell
+                            dwell_lockout_dot = active_cell  # Single-fire: won't re-toggle until finger leaves dot!
                             dwell_progress = 1.0
                             cx = MATRIX_ORIGIN_X + c * DOT_SPACING
                             cy = MATRIX_ORIGIN_Y + r * DOT_SPACING
                             click_ripple_anim = (cx, cy, now)
-                            print(f"[HAND DWELL] Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'}", flush=True)
+                            print(f"[HAND DWELL] Toggled Dot ({r}, {c}) -> {'ON' if grid_dots[r,c] else 'OFF'} (Delay: {dwell_trigger_time:.2f}s)", flush=True)
                     else:
+                        # Already toggled once while on this dot; waiting for user to leave
                         dwell_progress = 0.0
                 else:
+                    # Moved to a new cell: reset dwell timer and clear lockout
                     dwell_dot = active_cell
                     dwell_start_time = now
                     dwell_lockout_dot = None
@@ -942,44 +1072,38 @@ def main():
 
             last_pinch_state = is_pinching
 
+            # Predefined Gestures (Triggered outside the control area)
+            if active_cell is None and (now - last_gesture_cmd_time >= 2.5):
+                if gesture == "OPEN PALM":
+                    heart = [
+                        [0,1,1,0,0,1,1,0],
+                        [1,1,1,1,1,1,1,1],
+                        [1,1,1,1,1,1,1,1],
+                        [0,1,1,1,1,1,1,0],
+                        [0,0,1,1,1,1,0,0],
+                        [0,0,0,1,1,0,0,0],
+                        [0,0,0,0,0,0,0,0],
+                        [0,0,0,0,0,0,0,0]
+                    ]
+                    grid_dots[:] = heart
+                    comm.send_command("PATTERN:HEART")
+                    last_gesture_cmd_time = now
+                elif gesture == "PEACE SIGN":
+                    comm.send_command("MESSAGE:HELLO")
+                    last_gesture_cmd_time = now
+                elif gesture == "FIST":
+                    comm.send_command("MESSAGE:HOW YOU DOING?")
+                    last_gesture_cmd_time = now
+
             # 4. Render UI Components
-            draw_cyber_chassis(canvas, PANEL_LEFT_X, PANEL_LEFT_Y, PANEL_LEFT_W, PANEL_LEFT_H, "HOLOGRAPHIC AIR-PAD")
-            draw_cyber_chassis(canvas, PANEL_RIGHT_X, PANEL_RIGHT_Y, PANEL_RIGHT_W, PANEL_RIGHT_H, "8x8 HARDWARE MATRIX")
-
-            # Left Viewport & Holographic Pad
-            draw_camera_feed(canvas, frame_cam)
-            draw_holographic_air_pad(canvas, active_cell=active_cell, dwell_progress=dwell_progress, tip_px=tip_canvas)
-
-            # Left Toolbar Cyber Buttons
-            is_locked = control_area['locked']
-            lock_txt = "[ LOCKED ]" if is_locked else "[ EDITING ]"
-            lock_col = (0, 255, 120) if is_locked else (0, 160, 255)
-            draw_cyber_button(canvas, AREA_BUTTONS['LOCK_TOGGLE'], lock_txt,
-                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['LOCK_TOGGLE']),
-                              active_color=lock_col, is_active=is_locked)
-            draw_cyber_button(canvas, AREA_BUTTONS['DELAY_CYCLE'], f"HOLD {dwell_trigger_time:.2f}s",
-                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['DELAY_CYCLE']),
-                              active_color=(255, 230, 0))
-            draw_cyber_button(canvas, AREA_BUTTONS['CYCLE_SIZE'], f"{control_area['w']}px",
-                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['CYCLE_SIZE']),
-                              active_color=(255, 40, 220))
-            draw_cyber_button(canvas, AREA_BUTTONS['RESET'], "RESET",
-                              is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], AREA_BUTTONS['RESET']),
-                              active_color=(0, 200, 255))
-
-            # Right Panel: Glowing 8x8 Matrix, Neon Slider, Punchy Action Buttons
+            draw_camera_viewport(canvas, frame_cam)
+            draw_fixed_control_area(canvas, active_cell=active_cell, dwell_progress=dwell_progress, tip_px=tip_canvas)
+            draw_area_control_toolbar(canvas)
             draw_virtual_matrix(canvas, active_cell=active_cell)
-            draw_neon_brightness(canvas, current_brightness, is_dragging_brightness)
-
-            for key, btn in ACTION_BUTTONS.items():
-                rect = (btn[0], btn[1], btn[2], btn[3])
-                draw_cyber_button(canvas, rect, btn[4],
-                                  is_hovered=is_inside_rect(mouse_pos[0], mouse_pos[1], rect),
-                                  active_color=btn[6])
-
-            # Bold Header & Telemetry
-            draw_bold_header(canvas, comm.udp_ip, comm.udp_port, fps, gesture)
-            draw_bottom_telemetry(canvas, active_cell, comm.last_sent_cmd, comm.last_cmd_status)
+            draw_brightness_slider(canvas, current_brightness, is_dragging_brightness)
+            draw_preset_buttons(canvas)
+            draw_telemetry_bar(canvas, active_cell, comm.last_sent_cmd, comm.last_cmd_status)
+            draw_header_bar(canvas, comm.udp_ip, comm.udp_port, fps, gesture, comm.serial_connected)
 
             # 5. Display Window
             cv2.imshow(WINDOW_NAME, canvas)
@@ -987,33 +1111,24 @@ def main():
             # 6. Keyboard Shortcuts
             key = cv2.waitKey(1) & 0xFF
             if key in (ord('q'), ord('Q'), 27):
+                print("[SYSTEM] Exit requested by user.", flush=True)
                 break
             elif key in (ord('c'), ord('C')):
                 grid_dots.fill(0)
                 comm.send_command("PATTERN:CLEAR")
             elif key in (ord('h'), ord('H')):
-                heart = [
-                    [0,1,1,0,0,1,1,0],
-                    [1,1,1,1,1,1,1,1],
-                    [1,1,1,1,1,1,1,1],
-                    [0,1,1,1,1,1,1,0],
-                    [0,0,1,1,1,1,0,0],
-                    [0,0,0,1,1,0,0,0],
-                    [0,0,0,0,0,0,0,0],
-                    [0,0,0,0,0,0,0,0]
-                ]
-                grid_dots[:] = heart
                 comm.send_command("PATTERN:HEART")
-            elif key in (ord('i'), ord('I')):
-                grid_dots[:] = 1 - grid_dots
-                comm.send_command("PATTERN:INVERT")
+            elif key in (ord('s'), ord('S')):
+                comm.send_command("PATTERN:SMILE")
             elif key in (ord('p'), ord('P')):
                 comm.send_command("ANIMATION:PULSE")
             elif key in (ord('l'), ord('L')):
                 control_area['locked'] = not control_area['locked']
+                print(f"[KEYBOARD] Area mode: {'LOCKED' if control_area['locked'] else 'EDIT'}", flush=True)
             elif key in (ord('d'), ord('D')):
                 dwell_preset_idx = (dwell_preset_idx + 1) % len(DWELL_PRESETS)
                 dwell_trigger_time = DWELL_PRESETS[dwell_preset_idx]
+                print(f"[KEYBOARD] Touch delay set to: {dwell_trigger_time:.2f}s", flush=True)
 
             # 7. Frame Rate Limiter
             proc_time = time.perf_counter() - frame_start_time
